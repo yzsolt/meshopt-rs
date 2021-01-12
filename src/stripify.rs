@@ -74,7 +74,7 @@ pub fn stripify(destination: &mut [u32], indices: &[u32], vertex_count: usize, r
 		assert!(next < 0 || (((next >> 2) as usize) < buffer_size && (next & 3) < 3));
 
 		// fill triangle buffer
-		while buffer_size < BUFFER_CAPACITY && index_offset < index_count {
+		while buffer_size < buffer.len() && index_offset < index_count {
 			&buffer[buffer_size].copy_from_slice(&indices[index_offset..index_offset+3]);
 
 			buffer_size += 1;
@@ -85,9 +85,7 @@ pub fn stripify(destination: &mut [u32], indices: &[u32], vertex_count: usize, r
 
 		if next >= 0 {
 			let i = (next >> 2) as usize;
-            let a = buffer[i][0] as usize;
-            let b = buffer[i][1] as usize;
-            let c = buffer[i][2] as usize;
+            let abc = buffer[i];
 			let v = buffer[i][(next & 3) as usize];
 
             // ordered removal from the buffer
@@ -96,9 +94,9 @@ pub fn stripify(destination: &mut [u32], indices: &[u32], vertex_count: usize, r
 			buffer_size -= 1;
 
 			// update vertex valences for strip start heuristic
-			valence[a] -= 1;
-			valence[b] -= 1;
-			valence[c] -= 1;
+			valence[abc[0] as usize] -= 1;
+			valence[abc[1] as usize] -= 1;
+			valence[abc[2] as usize] -= 1;
 
 			// find next triangle (note that edge order flips on every iteration)
 			// in some cases we need to perform a swap to pick a different outgoing triangle edge
