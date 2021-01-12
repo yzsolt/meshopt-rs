@@ -63,27 +63,25 @@ pub fn stripify(destination: &mut [u32], indices: &[u32], vertex_count: usize, r
 	let mut valence = vec![0; vertex_count];
 
 	for index in indices {
-        let index = *index as usize;
-
-		assert!(index < vertex_count);
-
-		valence[index] += 1;
+		valence[*index as usize] += 1;
 	}
 
 	let mut next: i32 = -1;
 
-	while buffer_size > 0 || index_offset < indices.len() {
+	let index_count = indices.len();
+
+	while buffer_size > 0 || index_offset < index_count {
 		assert!(next < 0 || (((next >> 2) as usize) < buffer_size && (next & 3) < 3));
 
 		// fill triangle buffer
-		while buffer_size < BUFFER_CAPACITY && index_offset < indices.len() {
+		while buffer_size < BUFFER_CAPACITY && index_offset < index_count {
 			&buffer[buffer_size].copy_from_slice(&indices[index_offset..index_offset+3]);
 
 			buffer_size += 1;
 			index_offset += 3;
 		}
 
-		assert!(buffer_size > 0);
+		assert!(buffer_size > 0 && buffer_size <= buffer.len());
 
 		if next >= 0 {
 			let i = (next >> 2) as usize;
