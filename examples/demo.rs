@@ -263,7 +263,7 @@ fn opt_fetch(mesh: &mut Mesh) {
 fn opt_fetch_remap(mesh: &mut Mesh) {
 	// this produces results equivalent to `opt_fetch`, but can be used to remap multiple vertex streams
 	let mut remap = vec![0; mesh.vertices.len()];
-	optimize_vertex_fetch_remap(&mut remap, &mesh.indices, mesh.vertices.len());
+	optimize_vertex_fetch_remap(&mut remap, &mesh.indices);
 
 	remap_index_buffer(&mut mesh.indices, &remap);
 

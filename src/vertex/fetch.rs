@@ -72,18 +72,16 @@ pub fn analyze_vertex_fetch(indices: &[u32], vertex_count: usize, vertex_size: u
 ///
 /// # Arguments
 ///
-/// * `destination`: must contain enough space for the resulting remap table (`vertex_count` elements)
-pub fn optimize_vertex_fetch_remap(destination: &mut [u32], indices: &[u32], vertex_count: usize) -> usize {
+/// * `destination`: must contain the exact space for the resulting remap table (`vertex_count` elements)
+pub fn optimize_vertex_fetch_remap(destination: &mut [u32], indices: &[u32]) -> usize {
 	assert!(indices.len() % 3 == 0);
 
-    fill_slice(&mut destination[0..vertex_count], u32::MAX);
+    fill_slice(&mut destination[..], u32::MAX);
 
 	let mut next_vertex = 0;
 
 	for index in indices {
         let index = *index as usize;
-
-		assert!(index < vertex_count);
 
 		if destination[index] == u32::MAX {
             destination[index] = next_vertex as u32;
@@ -91,7 +89,7 @@ pub fn optimize_vertex_fetch_remap(destination: &mut [u32], indices: &[u32], ver
 		}
 	}
 
-	assert!(next_vertex <= vertex_count);
+	assert!(next_vertex <= destination.len());
 
 	next_vertex
 }
@@ -117,8 +115,6 @@ where
 
 	for index in indices.iter_mut() {
         let idx = *index as usize;
-
-		assert!(idx < vertices.len());
 
 		let remap = &mut vertex_remap[idx];
 
