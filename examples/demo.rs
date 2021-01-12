@@ -108,13 +108,12 @@ impl Mesh {
 
         let mut result = Mesh::default();
 
-        let total_vertices = generate_vertex_remap(&mut remap, /*Some(&indices)*/None, &vertices);
-    
-        result.indices.resize(total_indices, 0);
-        remap_index_buffer(&mut result.indices, /*Some(&indices)*/None, &remap);
+        let total_vertices = generate_vertex_remap(&mut remap, None, &vertices);
+	
+		result.indices = remap;
     
         result.vertices.resize(total_vertices, Vertex::default());
-        remap_vertex_buffer(&mut result.vertices, &vertices, &remap);
+        remap_vertex_buffer(&mut result.vertices, &vertices, &result.indices);
 
         let indexed = start.elapsed();
 
@@ -262,12 +261,12 @@ fn opt_fetch(mesh: &mut Mesh) {
 }
 
 fn opt_fetch_remap(mesh: &mut Mesh) {
-	// this produces results equivalent to `optFetch`, but can be used to remap multiple vertex streams
+	// this produces results equivalent to `opt_fetch`, but can be used to remap multiple vertex streams
 	let mut remap = vec![0; mesh.vertices.len()];
 	optimize_vertex_fetch_remap(&mut remap, &mesh.indices, mesh.vertices.len());
 
-	let indices_copy = mesh.indices.clone();
-	remap_index_buffer(&mut mesh.indices, Some(&indices_copy), &remap);
+	remap_index_buffer(&mut mesh.indices, &remap);
+
 	let vertices_copy = mesh.vertices.clone();
 	remap_vertex_buffer(&mut mesh.vertices, &vertices_copy, &remap);
 }
