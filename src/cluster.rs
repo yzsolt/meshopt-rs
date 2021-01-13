@@ -60,13 +60,13 @@ fn compute_bounding_sphere(points: &[[f32; 3]]) -> [f32; 4] {
     assert!(!points.is_empty());
     
 	// find extremum points along all 3 axes; for each axis we get a pair of points with min/max coordinates
-	let mut pmin: [usize; 3] = [0; 3];
-	let mut pmax: [usize; 3] = [0; 3];
+	let mut pmin = [[f32::MAX; 3]; 3];
+	let mut pmax = [[f32::MIN; 3]; 3];
 
-	for (i, p) in points.iter().enumerate() {
+	for p in points {
 		for axis in 0..3 {
-			pmin[axis] = if p[axis] < points[pmin[axis]][axis] { i } else { pmin[axis] };
-			pmax[axis] = if p[axis] > points[pmax[axis]][axis] { i } else { pmax[axis] };
+			if p[axis] < pmin[axis][axis] { pmin[axis] = *p; }
+			if p[axis] > pmax[axis][axis] { pmax[axis] = *p; }
 		}
 	}
 
@@ -75,8 +75,8 @@ fn compute_bounding_sphere(points: &[[f32; 3]]) -> [f32; 4] {
 	let mut paxis = 0;
 
 	for axis in 0..3 {
-		let p1 = points[pmin[axis]];
-		let p2 = points[pmax[axis]];
+		let p1 = pmin[axis];
+		let p2 = pmax[axis];
 
 		let d2 = (p2[0] - p1[0]) * (p2[0] - p1[0]) + (p2[1] - p1[1]) * (p2[1] - p1[1]) + (p2[2] - p1[2]) * (p2[2] - p1[2]);
 
@@ -87,8 +87,8 @@ fn compute_bounding_sphere(points: &[[f32; 3]]) -> [f32; 4] {
 	}
 
 	// use the longest segment as the initial sphere diameter
-	let p1 = points[pmin[paxis]];
-	let p2 = points[pmax[paxis]];
+	let p1 = pmin[paxis];
+	let p2 = pmax[paxis];
 
 	let mut center: [f32; 3] =[
         (p1[0] + p2[0]) / 2.0, 
@@ -206,9 +206,8 @@ pub fn build_meshlets(destination: &mut [Meshlet], indices: &[u32], vertex_count
             meshlet.vertex_count += 1;
 		}
 
-		meshlet.indices[meshlet.triangle_count as usize][0] = used[a];
-		meshlet.indices[meshlet.triangle_count as usize][1] = used[b];
-		meshlet.indices[meshlet.triangle_count as usize][2] = used[c];
+		meshlet.indices[meshlet.triangle_count as usize][..].copy_from_slice(&[used[a], used[b], used[c]]);
+
 		meshlet.triangle_count += 1;
 	}
 
@@ -261,11 +260,13 @@ where
 	let mut corners: [[[f32; 3]; 3]; 256] = [Default::default(); 256];
 	let mut triangles = 0;
 
+	let vertex_count = vertices.len();
+
 	for i in (0..indices.len()).step_by(3) {
         let a = indices[i + 0] as usize;
         let b = indices[i + 1] as usize;
         let c = indices[i + 2] as usize;
-        assert!(a < vertices.len() && b < vertices.len() && c < vertices.len());
+        assert!(a < vertex_count && b < vertex_count && c < vertex_count);
 
 		let p0 = vertices[a].pos();
 		let p1 = vertices[b].pos();
@@ -364,7 +365,7 @@ where
 		assert!(dn > 0.0);
 		let t = dc / dn;
 
-		maxt = if t > maxt { t } else { maxt };
+		maxt = t.max(maxt);
 	}
 
 	// cone apex should be in the negative half-space of all cluster triangles by construction
@@ -417,11 +418,9 @@ where
 		let b = meshlet.vertices[meshlet.indices[i][1] as usize].try_into().unwrap();
 		let c = meshlet.vertices[meshlet.indices[i][2] as usize].try_into().unwrap();
 
-		assert!((a as usize) < vertices.len() && (b as usize) < vertices.len() && (c as usize) < vertices.len());
+		// note: `compute_cluster_bounds` checks later if a/b/c are in range, no need to do it here
 
-		indices[i * 3 + 0] = a;
-		indices[i * 3 + 1] = b;
-		indices[i * 3 + 2] = c;
+		indices[i*3..i*3+3].copy_from_slice(&[a, b, c]);
 	}
 
 	return compute_cluster_bounds(&indices[0..meshlet.triangle_count as usize * 3], vertices);
