@@ -115,8 +115,6 @@ fn build_triangle_adjacency(adjacency: &mut TriangleAdjacency, indices: &[u32], 
 	adjacency.data = vec![0; indices.len()];
 
 	// fill triangle counts
-	fill_slice(&mut adjacency.counts, 0);
-
 	for index in indices {
 		let index = *index as usize;
 
@@ -153,7 +151,7 @@ fn build_triangle_adjacency(adjacency: &mut TriangleAdjacency, indices: &[u32], 
 	}
 }
 
-fn get_next_vertex_dead_end(dead_end: &[u32], dead_end_top: &mut usize, input_cursor: &mut usize, live_triangles: &[u32], vertex_count: usize) -> u32 {
+fn get_next_vertex_dead_end(dead_end: &[u32], dead_end_top: &mut usize, input_cursor: &mut usize, live_triangles: &[u32]) -> u32 {
 	// check dead-end stack
 	while *dead_end_top != 0 {
 		*dead_end_top -= 1;
@@ -165,6 +163,7 @@ fn get_next_vertex_dead_end(dead_end: &[u32], dead_end_top: &mut usize, input_cu
 	}
 
 	// input order
+	let vertex_count = live_triangles.len();
 	while *input_cursor < vertex_count {
 		if live_triangles[*input_cursor] > 0 {
 			return *input_cursor as u32;
@@ -205,22 +204,25 @@ fn get_next_vertex_neighbour(next_candidates: &[u32], live_triangles: &[u32], ca
 fn vertex_score(table: &VertexScoreTable, cache_position: i32, live_triangles: usize) -> f32 {
 	assert!(cache_position >= -1 && cache_position < CACHE_SIZE_MAX as i32);
 
-	let live_triangles_clamped = if live_triangles < VALENCE_MAX { live_triangles } else { VALENCE_MAX };
+	let live_triangles_clamped = live_triangles.min(VALENCE_MAX);
 
 	table.cache[(1 + cache_position) as usize] + table.live[live_triangles_clamped]
 }
 
-fn get_next_triangle_dead_end(input_cursor: &mut usize, emitted_flags: &[bool], face_count: usize) -> u32 {
-	// input order
-	while *input_cursor < face_count {
-		if !emitted_flags[*input_cursor] {
-			return *input_cursor as u32;
-		}
+fn get_next_triangle_dead_end(input_cursor: &mut usize, emitted_flags: &[bool]) -> u32 {
+	let triangle = emitted_flags[*input_cursor..]
+		.iter()
+		.position(|f| !*f)
+		.map(|p| (*input_cursor + p) as u32)
+		.unwrap_or(u32::MAX);
 
-		*input_cursor += 1;
-	}
+	*input_cursor = if triangle == u32::MAX { 
+		emitted_flags.len() 
+	} else { 
+		triangle as usize 
+	};
 
-	u32::MAX
+	triangle
 }
 
 fn optimize_vertex_cache_table(destination: &mut [u32], indices: &[u32], vertex_count: usize, table: &VertexScoreTable) {
@@ -249,15 +251,15 @@ fn optimize_vertex_cache_table(destination: &mut [u32], indices: &[u32], vertex_
 	// compute initial vertex scores
 	let mut vertex_scores = vec![0.0; vertex_count];
 
-	for i in 0..vertex_count {
-		vertex_scores[i] = vertex_score(table, -1, live_triangles[i] as usize);
+	for (i, s) in vertex_scores.iter_mut().enumerate() {
+		*s = vertex_score(table, -1, live_triangles[i] as usize);
 	}
 
 	// compute triangle scores
 	let mut triangle_scores = vec![0.0; face_count];
 
-	for i in 0..face_count {
-		triangle_scores[i] = indices[i*3..i*3+3].iter().map(|idx| vertex_scores[*idx as usize]).sum();
+	for (i, s) in triangle_scores.iter_mut().enumerate() {
+		*s = indices[i*3..i*3+3].iter().map(|idx| vertex_scores[*idx as usize]).sum();
 	}
 
 	let mut cache_holder = [0; 2 * (CACHE_SIZE_MAX + 3)];
@@ -299,7 +301,7 @@ fn optimize_vertex_cache_table(destination: &mut [u32], indices: &[u32], vertex_
 		}
 
 		std::mem::swap(&mut cache, &mut cache_new);
-		cache_count = if cache_write > cache_size { cache_size } else { cache_write };
+		cache_count = cache_write.min(cache_size);
 
 		// update live triangle counts
 		for e in abc {
@@ -308,8 +310,8 @@ fn optimize_vertex_cache_table(destination: &mut [u32], indices: &[u32], vertex_
 
 		// remove emitted triangle from adjacency data
 		// this makes sure that we spend less time traversing these lists on subsequent iterations
-		for k in 0..3 {
-			let index = indices[current_triangle as usize * 3 + k] as usize;
+		for index in abc {
+			let index = *index as usize;
 
 			let neighbours = &mut adjacency.data[adjacency.offsets[index] as usize..];
 			let neighbours_size = adjacency.counts[index] as usize;
@@ -363,7 +365,7 @@ fn optimize_vertex_cache_table(destination: &mut [u32], indices: &[u32], vertex_
 		current_triangle = best_triangle;
 
 		if current_triangle == u32::MAX { 
-			current_triangle = get_next_triangle_dead_end(&mut input_cursor, &emitted_flags, face_count);
+			current_triangle = get_next_triangle_dead_end(&mut input_cursor, &emitted_flags);
 		}
 	}
 
@@ -450,32 +452,26 @@ pub fn optimize_vertex_cache_fifo(destination: &mut [u32], indices: &[u32], vert
 			let triangle = *triangle as usize;
 
 			if !emitted_flags[triangle] {
-				let a = indices[triangle * 3 + 0];
-				let b = indices[triangle * 3 + 1];
-				let c = indices[triangle * 3 + 2];
+				let abc = &indices[triangle*3..triangle*3+3];
 
 				// output indices
-				destination[output_triangle * 3 + 0] = a;
-				destination[output_triangle * 3 + 1] = b;
-				destination[output_triangle * 3 + 2] = c;
+				destination[output_triangle*3..output_triangle*3+3].copy_from_slice(&abc);
 				output_triangle += 1;
 
 				// update dead-end stack
-				dead_end[dead_end_top + 0] = a;
-				dead_end[dead_end_top + 1] = b;
-				dead_end[dead_end_top + 2] = c;
+				dead_end[dead_end_top..dead_end_top+3].copy_from_slice(&abc);
 				dead_end_top += 3;
 
-				let abc = [a as usize, b as usize, c as usize];
+				for i in abc {
+					let i = *i as usize;
 
-				for i in &abc {
 					// update live triangle counts
-					live_triangles[*i] -= 1;
+					live_triangles[i] -= 1;
 
 					// update cache info
 					// if vertex is not in cache, put it in cache
-					if timestamp - cache_timestamps[*i] > cache_size {
-						cache_timestamps[*i] = timestamp;
+					if timestamp - cache_timestamps[i] > cache_size {
+						cache_timestamps[i] = timestamp;
 						timestamp += 1;
 					}
 				}
@@ -492,7 +488,7 @@ pub fn optimize_vertex_cache_fifo(destination: &mut [u32], indices: &[u32], vert
 		current_vertex = get_next_vertex_neighbour(next_candidates, &live_triangles, &cache_timestamps, timestamp, cache_size);
 
 		if current_vertex == u32::MAX {
-			current_vertex = get_next_vertex_dead_end(&dead_end, &mut dead_end_top, &mut input_cursor, &live_triangles, vertex_count);
+			current_vertex = get_next_vertex_dead_end(&dead_end, &mut dead_end_top, &mut input_cursor, &live_triangles);
 		}
 	}
 
