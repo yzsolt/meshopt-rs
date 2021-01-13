@@ -186,7 +186,6 @@ where
 
 	for (i, index) in indices.iter().enumerate() {
         let index = *index as usize;
-		assert!(index < vertices.len());
 
 		if remap[index] == INVALID_INDEX {
             let vertex_wrapper = VertexWrapper { 
