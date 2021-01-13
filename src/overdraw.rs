@@ -203,7 +203,7 @@ where
 		0.0 
 	};
 
-	return result;
+	result
 }
 
 fn calculate_sort_data<Vertex>(sort_data: &mut [f32], indices: &[u32], vertices: &[Vertex], clusters: &[u32])
@@ -369,7 +369,7 @@ fn generate_hard_boundaries(destination: &mut [u32], indices: &[u32], cache_size
 
 	assert!(result <= indices.len() / 3);
 
-	return result;
+	result
 }
 
 fn generate_soft_boundaries(destination: &mut [u32], indices: &[u32], clusters: &[u32], cache_size: u32, threshold: f32, cache_timestamps: &mut [u32]) -> usize {
@@ -459,7 +459,7 @@ pub fn optimize_overdraw<Vertex>(destination: &mut [u32], indices: &[u32], verti
 where
 	Vertex: Position
 {
-	assert!(indices.len() % 3 == 0);
+	assert_eq!(indices.len() % 3, 0);
 
 	// guard for empty meshes
 	if indices.is_empty() || vertices.is_empty() {
