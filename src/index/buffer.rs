@@ -52,6 +52,7 @@ fn get_edge_fifo(fifo: &EdgeFifo, a: u32, b: u32, c: u32, offset: usize) -> i32 
 	-1
 }
 
+#[inline(always)]
 fn push_edge_fifo(fifo: &mut EdgeFifo, a: u32, b: u32, offset: &mut usize) {
 	fifo[*offset][0] = a;
 	fifo[*offset][1] = b;
@@ -70,6 +71,7 @@ fn get_vertex_fifo(fifo: &VertexFifo, v: u32, offset: usize) -> i32 {
 	-1
 }
 
+#[inline(always)]
 fn push_vertex_fifo(fifo: &mut VertexFifo, v: u32, offset: &mut usize, cond: Option<bool>) {
 	fifo[*offset] = v;
 	*offset = (*offset + cond.unwrap_or(true) as usize) & 15;
