@@ -327,16 +327,14 @@ where
 	// compute a tight cone around all normals, mindp = cos(angle/2)
 	let mut mindp = 1.0;
 
-	for i in 0..triangles {
-		let dp = normals[i][0] * axis[0] + normals[i][1] * axis[1] + normals[i][2] * axis[2];
+	for normal in &normals[0..triangles] {
+		let dp = normal[0] * axis[0] + normal[1] * axis[1] + normal[2] * axis[2];
 
 		mindp = dp.min(mindp);
 	}
 
 	// fill bounding sphere info; note that below we can return bounds without cone information for degenerate cones
-	bounds.center[0] = center[0];
-	bounds.center[1] = center[1];
-	bounds.center[2] = center[2];
+	bounds.center = center;
 	bounds.radius = psphere[3];
 
 	// degenerate cluster, normal cone is larger than a hemisphere => trivial accept
@@ -354,12 +352,14 @@ where
 	for i in 0..triangles {
 		// dot(center-t*axis-corner, trinormal) = 0
 		// dot(center-corner, trinormal) - t * dot(axis, trinormal) = 0
-		let cx = center[0] - corners[i][0][0];
-		let cy = center[1] - corners[i][0][1];
-		let cz = center[2] - corners[i][0][2];
+		let corner = corners[i][0];
+		let cx = center[0] - corner[0];
+		let cy = center[1] - corner[1];
+		let cz = center[2] - corner[2];
 
-		let dc = cx * normals[i][0] + cy * normals[i][1] + cz * normals[i][2];
-		let dn = axis[0] * normals[i][0] + axis[1] * normals[i][1] + axis[2] * normals[i][2];
+		let normal = normals[i];
+		let dc = cx * normal[0] + cy * normal[1] + cz * normal[2];
+		let dn = axis[0] * normal[0] + axis[1] * normal[1] + axis[2] * normal[2];
 
 		// dn should be larger than mindp cutoff above
 		assert!(dn > 0.0);
@@ -411,19 +411,21 @@ pub fn compute_meshlet_bounds<Vertex>(meshlet: &Meshlet, vertices: &[Vertex]) ->
 where
 	Vertex: Position
 {
-	let mut indices: [u32; Meshlet::TRIANGLES_COUNT * 3] = [0; Meshlet::TRIANGLES_COUNT * 3];
+	let mut indices = [0; Meshlet::TRIANGLES_COUNT * 3];
 
 	for i in 0..meshlet.triangle_count as usize {
-		let a = meshlet.vertices[meshlet.indices[i][0] as usize].try_into().unwrap();
-		let b = meshlet.vertices[meshlet.indices[i][1] as usize].try_into().unwrap();
-		let c = meshlet.vertices[meshlet.indices[i][2] as usize].try_into().unwrap();
+		let triangle = meshlet.indices[i];
+
+		let a = meshlet.vertices[triangle[0] as usize] as u32;
+		let b = meshlet.vertices[triangle[1] as usize] as u32;
+		let c = meshlet.vertices[triangle[2] as usize] as u32;
 
 		// note: `compute_cluster_bounds` checks later if a/b/c are in range, no need to do it here
 
 		indices[i*3..i*3+3].copy_from_slice(&[a, b, c]);
 	}
 
-	return compute_cluster_bounds(&indices[0..meshlet.triangle_count as usize * 3], vertices);
+	compute_cluster_bounds(&indices[0..meshlet.triangle_count as usize * 3], vertices)
 }
 
 #[cfg(test)]
