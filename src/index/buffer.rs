@@ -25,7 +25,7 @@ const CODE_AUX_ENCODING_TABLE: [u8; 16] = [
     0, 0, // last two entries aren't used for encoding
 ];
 
-fn rotate_triangle(_a: u32, b: u32, c: u32, next: u32) -> i32 {
+fn rotate_triangle(b: u32, c: u32, next: u32) -> i32 {
 	if b == next { 1 } else { if c == next { 2 } else { 0 } }
 }
 
@@ -203,7 +203,7 @@ pub fn encode_index_buffer(mut buffer: &mut [u8], indices: &[u32], version: Inde
 			push_edge_fifo(&mut edgefifo, c, b, &mut edgefifooffset);
 			push_edge_fifo(&mut edgefifo, a, c, &mut edgefifooffset);
 		} else {
-			let rotation = rotate_triangle(indices[i + 0], indices[i + 1], indices[i + 2], next);
+			let rotation = rotate_triangle(indices[i + 1], indices[i + 2], next);
 			let order = TRIANGLE_INDEX_ORDER[rotation as usize];
 
 			let a = indices[i + order[0]];
@@ -294,7 +294,7 @@ pub fn encode_index_buffer(mut buffer: &mut [u8], indices: &[u32], version: Inde
 	}
 
 	// since we encode restarts as codeaux without a table reference, we need to make sure 00 is encoded as a table reference
-	assert!(codeaux_table[0] == 0);
+	assert_eq!(codeaux_table[0], 0);
 
 	//assert!(data >= buffer + indices.len() / 3 + 16);
 	//assert!(data <= buffer + buffer.len());
@@ -356,7 +356,11 @@ where T: From<u32>
 	let mut next: u32 = 0;
 	let mut last: u32 = 0;
 
-	let fecmax = if version >= 1 { 13 } else { 15 };
+	let fecmax = if version >= 1 { 
+		13 
+	} else { 
+		15 
+	};
 
 	// since we store 16-byte codeaux table at the end, triangle data has to begin before data_safe_end
 	let (mut code, mut data, codeaux_table, data_safe_end) = {
@@ -370,7 +374,6 @@ where T: From<u32>
 		// make sure we have enough data to read for a triangle
 		// each triangle reads at most 16 bytes of data: 1b for codeaux and 5b for each free index
 		// after this we can be sure we can read without extra bounds checks
-		//if data.clone().seek(std::io::SeekFrom::Current(1)).is_err() {
 		if data.position() > data_safe_end as u64 {
 			return Err(DecodeError::UnexpectedEof);
 		}
@@ -384,7 +387,7 @@ where T: From<u32>
 			let a = edgefifo[(edgefifooffset.wrapping_sub(fe + 1)) & 15][0];
 			let b = edgefifo[(edgefifooffset.wrapping_sub(fe + 1)) & 15][1];
 
-			let fec: usize = codetri & 15;
+			let fec = codetri & 15;
 
 			// note: this is the most common path in the entire decoder
 			// inside this if we try to stay branchless (by using cmov/etc.) since these aren't predictable
