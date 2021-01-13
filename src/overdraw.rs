@@ -158,7 +158,6 @@ where
 
 	for (i, index) in indices.iter().enumerate() {
 		let index = *index as usize;
-		assert!(index < vertices.len());
 
 		let v = vertices[index].pos();
 
@@ -275,45 +274,43 @@ where
 	}
 }
 
-fn calculate_sort_order_radix(sort_order: &mut [u32], sort_data: &[f32], sort_keys: &mut [u16], cluster_count: usize) {
+fn calculate_sort_order_radix(sort_order: &mut [u32], sort_data: &[f32], sort_keys: &mut [u16]) {
 	// compute sort data bounds and renormalize, using fixed point snorm
-	let mut sort_data_max = 0.001;
+	let mut sort_data_max: f32 = 0.001;
 
-	for i in 0..cluster_count {
-		let dpa = sort_data[i].abs();
-
-		sort_data_max = if sort_data_max < dpa { dpa } else { sort_data_max }; // TODO: max with iter
+	for data in sort_data {
+		sort_data_max = sort_data_max.max(data.abs());
 	}
 
 	const SORT_BITS: i32 = 11;
 
-	for i in 0..cluster_count {
+	for (data, key) in sort_data.iter().zip(sort_keys.iter_mut()) {
 		// note that we flip distribution since high dot product should come first
-		let sort_key = 0.5 - 0.5 * (sort_data[i] / sort_data_max);
+		let sort_key = 0.5 - 0.5 * (data / sort_data_max);
 
-		sort_keys[i] = (quantize_unorm(sort_key, SORT_BITS) & ((1 << SORT_BITS) - 1)) as u16;
+		*key = (quantize_unorm(sort_key, SORT_BITS) & ((1 << SORT_BITS) - 1)) as u16;
 	}
 
 	// fill histogram for counting sort
 	let mut histogram = [0; 1 << SORT_BITS];
 
-	for i in 0..cluster_count {
-		histogram[sort_keys[i] as usize] += 1;
+	for key in sort_keys.iter() {
+		histogram[*key as usize] += 1;
 	}
 
 	// compute offsets based on histogram data
 	let mut histogram_sum = 0;
 
-	for i in 0..(1 << SORT_BITS) {
+	for i in 0..histogram.len() {
 		let count = histogram[i];
 		histogram[i] = histogram_sum;
 		histogram_sum += count;
 	}
 
-	assert!(histogram_sum == cluster_count);
+	assert_eq!(histogram_sum, sort_keys.len());
 
 	// compute sort order based on offsets
-	for i in 0..cluster_count {
+	for i in 0..sort_keys.len() {
 		let idx = &mut histogram[sort_keys[i] as usize];
 		sort_order[*idx as usize] = i as u32;
 		*idx += 1;
@@ -346,8 +343,6 @@ fn update_cache(a: u32, b: u32, c: u32, cache_size: u32, cache_timestamps: &mut 
 }
 
 fn generate_hard_boundaries(destination: &mut [u32], indices: &[u32], cache_size: u32, cache_timestamps: &mut [u32]) -> usize {
-	fill_slice(cache_timestamps, 0);
-
 	let mut timestamp = cache_size as u32 + 1;
 
 	let face_count = indices.len() / 3;
@@ -373,8 +368,6 @@ fn generate_hard_boundaries(destination: &mut [u32], indices: &[u32], cache_size
 }
 
 fn generate_soft_boundaries(destination: &mut [u32], indices: &[u32], clusters: &[u32], cache_size: u32, threshold: f32, cache_timestamps: &mut [u32]) -> usize {
-	fill_slice(cache_timestamps, 0);
-
 	let mut timestamp = 0;
 
 	let mut result = 0;
@@ -475,6 +468,7 @@ where
 	let hard_cluster_count = generate_hard_boundaries(&mut hard_clusters, indices, CACHE_SIZE, &mut cache_timestamps);
 
 	// generate soft boundaries
+	fill_slice(&mut cache_timestamps, 0);
 	let mut soft_clusters = vec![0u32; indices.len() / 3 + 1];
 	let soft_cluster_count = generate_soft_boundaries(&mut soft_clusters, indices, &hard_clusters[0..hard_cluster_count], CACHE_SIZE, threshold, &mut cache_timestamps);
 
@@ -487,14 +481,13 @@ where
 	// sort clusters using sort data
 	let mut sort_keys = vec![0u16; clusters.len()];
 	let mut sort_order = vec![0u32; clusters.len()];
-	calculate_sort_order_radix(&mut sort_order, &mut sort_data, &mut sort_keys, clusters.len());
+	calculate_sort_order_radix(&mut sort_order, &mut sort_data, &mut sort_keys);
 
 	// fill output buffer
 	let mut offset = 0;
 
-	for it in 0..clusters.len() {
-		let cluster = sort_order[it] as usize;
-		assert!(cluster < clusters.len());
+	for cluster in &sort_order {
+		let cluster = *cluster as usize;
 
 		let cluster_begin = (clusters[cluster] * 3) as usize;
 		let cluster_end = if let Some(begin) = clusters.get(cluster + 1) { (begin * 3) as usize } else { indices.len() };
