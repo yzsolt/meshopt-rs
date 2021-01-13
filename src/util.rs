@@ -10,6 +10,7 @@ pub(crate) fn fill_slice<T: Clone>(slice: &mut [T], value: T) {
     }
 }
 
+#[inline(always)]
 pub(crate) fn zero_inverse(value: f32) -> f32 {
     if value != 0.0 {
         1.0 / value
