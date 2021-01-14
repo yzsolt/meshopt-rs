@@ -158,7 +158,7 @@ pub fn encode_index_buffer(mut buffer: &mut [u8], indices: &[u32], version: Inde
 		// each triangle writes at most 16 bytes: 1b for codeaux and 5b for each free index
 		// after this we can be sure we can write without extra bounds checks
 		if data.len() < 16 {
-			//return None;
+			return None;
 		}
 
 		let fer = get_edge_fifo(&edgefifo, indices[i + 0], indices[i + 1], indices[i + 2], edgefifooffset);
