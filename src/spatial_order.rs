@@ -5,6 +5,7 @@ use crate::Vector3;
 use crate::vertex::{calc_pos_extents, Position};
 
 // "Insert" two 0 bits after each of the 10 low bits of x
+#[inline(always)]
 fn part_1_by_2(mut x: u32) -> u32 {
 	x &= 0x000003ff;                  // x = ---- ---- ---- ---- ---- --98 7654 3210
 	x = (x ^ (x << 16)) & 0xff0000ff; // x = ---- --98 ---- ---- ---- ---- 7654 3210
@@ -35,8 +36,6 @@ where
 }
 
 fn compute_histogram(hist: &mut [[u32; 3]; 1024], data: &[u32]) {
-	fill_slice(hist, Default::default());
-
 	// compute 3 10-bit histograms in parallel
 	for id in data {
         let id = *id as usize;
@@ -93,8 +92,8 @@ where
 
 	let mut scratch = vec![0; vertices.len()];
 
-	for i in 0..vertices.len() {
-        destination[i] = i as u32;
+	for (i, d) in destination[0..vertices.len()].iter_mut().enumerate() {
+        *d = i as u32;
     }
 
 	// 3-pass radix sort computes the resulting order into scratch
