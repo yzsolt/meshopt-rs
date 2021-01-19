@@ -3,7 +3,7 @@ use crate::util::fill_slice;
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::convert::TryInto;
-use std::hash::{BuildHasherDefault, Hash, Hasher};
+use std::hash::{BuildHasherDefault, Hasher};
 use std::ops::Range;
 
 const INVALID_INDEX: u32 = u32::MAX;
@@ -42,35 +42,11 @@ impl Hasher for VertexHasher {
 
 type BuildVertexHasher = BuildHasherDefault<VertexHasher>;
 
-struct VertexWrapper<Vertex> {
-    data: Vertex,
-    subset: Range<u8>,
-}
-
 fn as_bytes<T>(data: &T) -> &[u8] {
     unsafe { std::slice::from_raw_parts(
         (data as *const T) as *const u8,
         std::mem::size_of::<T>(),
     ) }
-}
-
-impl<Vertex> PartialEq for VertexWrapper<Vertex> {
-    fn eq(&self, other: &Self) -> bool {
-        let bytes = as_bytes(&self.data);
-        let other_bytes = as_bytes(&other.data);
-        let range = Range { start: self.subset.start as usize, end: self.subset.end as usize };
-        &bytes[range.clone()] == &other_bytes[range]
-    }
-}
-
-impl<Vertex> Eq for VertexWrapper<Vertex> {}
-
-impl<Vertex> Hash for VertexWrapper<Vertex> {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        let bytes = as_bytes(&self.data);
-        let range = Range { start: self.subset.start as usize, end: self.subset.end as usize };
-        state.write(&bytes[range]);
-    }
 }
 
 /// Generates a vertex remap table from the vertex buffer and an optional index buffer and returns number of unique vertices.
@@ -84,10 +60,7 @@ impl<Vertex> Hash for VertexWrapper<Vertex> {
 ///
 /// * `destination`: must contain enough space for the resulting remap table (`vertices.len()` elements)
 /// * `indices`: can be `None` if the input is unindexed
-pub fn generate_vertex_remap<Vertex>(destination: &mut [u32], indices: Option<&[u32]>, vertices: &[Vertex]) -> usize
-where 
-    Vertex: Copy
-{
+pub fn generate_vertex_remap<Vertex>(destination: &mut [u32], indices: Option<&[u32]>, vertices: &[Vertex]) -> usize {
     let index_count = match indices {
         Some(buffer) => buffer.len(),
         None => vertices.len(),
@@ -100,8 +73,6 @@ where
 
     let mut next_vertex = 0;
     
-    let vertex_size: u8 = std::mem::size_of::<Vertex>().try_into().unwrap();
-
 	for i in 0..index_count {
 		let index = match indices {
             Some(buffer) => buffer[i] as usize,
@@ -110,12 +81,7 @@ where
 		assert!(index < vertices.len());
 
 		if destination[index] == INVALID_INDEX {
-            let vertex_wrapper = VertexWrapper { 
-                data: vertices[index], 
-                subset: (0..vertex_size),
-            };
-
-            match table.entry(vertex_wrapper) {
+            match table.entry(as_bytes(&vertices[index])) {
                 Entry::Occupied(entry) => {
                     let value = *entry.get() as usize;
                     assert!(destination[value] != INVALID_INDEX);
@@ -173,12 +139,8 @@ pub fn remap_index_buffer(indices: &mut [u32], remap: &[u32]) {
 /// # Arguments
 ///
 /// * `destination`: must contain enough space for the resulting index buffer (`indices.len()` elements)
-pub fn generate_shadow_index_buffer<Vertex>(destination: &mut [u32], indices: &[u32], vertices: &[Vertex], subset: Range<usize>)
-where 
-    Vertex: Copy
-{
+pub fn generate_shadow_index_buffer<Vertex>(destination: &mut [u32], indices: &[u32], vertices: &[Vertex], subset: Range<usize>) {
     assert_eq!(indices.len() % 3, 0);
-    assert!(subset.end <= u8::MAX as usize);
     
     let mut remap: Vec<u32> = vec![INVALID_INDEX; vertices.len()];
 
@@ -188,12 +150,9 @@ where
         let index = *index as usize;
 
 		if remap[index] == INVALID_INDEX {
-            let vertex_wrapper = VertexWrapper { 
-                data: vertices[index], 
-                subset: Range { start: subset.start as u8, end: subset.end as u8 },
-            };
+            let bytes = as_bytes(&vertices[index]);
 
-            remap[index] = match table.entry(vertex_wrapper) {
+            remap[index] = match table.entry(&bytes[subset.start..subset.end]) {
                 Entry::Occupied(entry) => *entry.get(),
                 Entry::Vacant(entry) => {
                     entry.insert(index as u32);
