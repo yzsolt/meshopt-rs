@@ -1,3 +1,5 @@
+//! Index buffer generation and index/vertex buffer remapping
+
 use crate::util::fill_slice;
 
 use std::collections::hash_map::Entry;
