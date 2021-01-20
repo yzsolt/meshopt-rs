@@ -24,19 +24,15 @@ fn build_edge_adjacency(adjacency: &mut EdgeAdjacency, indices: &[u32], vertex_c
 
 	// fill edge counts
 	for index in indices {
-        let index = *index as usize;
-
-		assert!(index < vertex_count);
-
-		adjacency.counts[index] += 1;
+		adjacency.counts[*index as usize] += 1;
 	}
 
 	// fill offset table
 	let mut offset = 0;
 
-	for i in 0..vertex_count {
-		adjacency.offsets[i] = offset;
-		offset += adjacency.counts[i];
+	for (o, count) in adjacency.offsets.iter_mut().zip(adjacency.counts.iter()) {
+		*o = offset;
+		offset += *count;
 	}
 
 	assert_eq!(offset as usize, indices.len());
@@ -57,10 +53,10 @@ fn build_edge_adjacency(adjacency: &mut EdgeAdjacency, indices: &[u32], vertex_c
 	}
 
 	// fix offsets that have been disturbed by the previous pass
-	for i in 0..vertex_count {
-		assert!(adjacency.offsets[i] >= adjacency.counts[i]);
+	for (offset, count) in adjacency.offsets.iter_mut().zip(adjacency.counts.iter()) {
+		assert!(*offset >= *count);
 
-		adjacency.offsets[i] -= adjacency.counts[i];
+		*offset -= *count;
 	}
 }
 
@@ -167,12 +163,12 @@ where
 
 	// build wedge table: for each vertex, which other vertex is the next wedge that also maps to the same vertex?
 	// entries in table form a (cyclic) wedge loop per vertex; for manifold vertices, wedge[i] == remap[i] == i
-	for i in 0..vertices.len() {
-        wedge[i] = i as u32;
+	for (i, w) in wedge.iter_mut().enumerate() {
+        *w = i as u32;
     }
 
-	for i in 0..vertices.len() {
-        let ri = remap[i] as usize;
+	for (i, ri) in remap.iter().enumerate() {
+        let ri = *ri as usize;
 
 		if ri != i {
 			let r = ri;
@@ -244,9 +240,7 @@ fn classify_vertices(result: &mut [VertexKind], loop_: &mut [u32], loopback: &mu
 	let openinc = loopback;
 	let openout = loop_;
 
-	for i in 0..vertex_count {
-		let vertex = i;
-
+	for vertex in 0..vertex_count {
         let offset = adjacency.offsets[vertex] as usize;
         let count = adjacency.counts[vertex] as usize;
 
@@ -670,7 +664,7 @@ fn rank_edge_collapses(collapses: &mut [Collapse], vertex_positions: &[Vector3],
 		// pick edge direction with minimal error
 		c.v0 = if ei <= ej { i0 } else { j0 };
 		c.v1 = if ei <= ej { i1 } else { j1 };
-		c.u.error = if ei <= ej { ei } else { ej };
+		c.u.error = ei.min(ej);
 	}
 }
 
@@ -825,14 +819,18 @@ fn remap_index_buffer(indices: &mut [u32], collapse_remap: &[u32]) -> usize {
 	write
 }
 
-fn remap_edge_loops(loop_: &mut [u32], vertex_count: usize, collapse_remap: &[u32]) {
-	for i in 0..vertex_count {
+fn remap_edge_loops(loop_: &mut [u32], collapse_remap: &[u32]) {
+	for i in 0..loop_.len() {
 		if loop_[i] != INVALID {
 			let l = loop_[i];
 			let r = collapse_remap[l as usize];
 
 			// i == r is a special case when the seam edge is collapsed in a direction opposite to where loop goes
-			loop_[i] = if i == r as usize { loop_[l as usize] } else { r };
+			loop_[i] = if i == r as usize { 
+				loop_[l as usize] 
+			} else { 
+				r 
+			};
 		}
 	}
 }
@@ -841,23 +839,22 @@ fn compute_vertex_ids(vertex_ids: &mut [u32], vertex_positions: &[Vector3], grid
 	assert!(grid_size >= 1 && grid_size <= 1024);
 	let cell_scale = (grid_size - 1) as f32;
 
-	for (i, v) in vertex_positions.iter().enumerate() {
-		let xi = (v.x * cell_scale + 0.5) as i32;
-		let yi = (v.y * cell_scale + 0.5) as i32;
-		let zi = (v.z * cell_scale + 0.5) as i32;
+	for (pos, id) in vertex_positions.iter().zip(vertex_ids.iter_mut()) {
+		let xi = (pos.x * cell_scale + 0.5) as i32;
+		let yi = (pos.y * cell_scale + 0.5) as i32;
+		let zi = (pos.z * cell_scale + 0.5) as i32;
 
-		vertex_ids[i] = ((xi << 20) | (yi << 10) | zi) as u32;
+		*id = ((xi << 20) | (yi << 10) | zi) as u32;
 	}
 }
 
 fn count_triangles(vertex_ids: &[u32], indices: &[u32]) -> usize {
-    // TODO: functional style
 	let mut result = 0;
 
-	for i in (0..indices.len()).step_by(3) {
-		let id0 = vertex_ids[indices[i + 0] as usize];
-		let id1 = vertex_ids[indices[i + 1] as usize];
-		let id2 = vertex_ids[indices[i + 2] as usize];
+	for abc in indices.chunks_exact(3) {
+		let id0 = vertex_ids[abc[0] as usize];
+		let id1 = vertex_ids[abc[1] as usize];
+		let id2 = vertex_ids[abc[2] as usize];
 
 		result += ((id0 != id1) && (id0 != id2) && (id1 != id2)) as usize;
 	}
@@ -906,10 +903,10 @@ fn count_vertex_cells(table: &mut HashMap<u32, u32, hash::BuildIdHasher>, vertex
 }
 
 fn fill_cell_quadrics(cell_quadrics: &mut [Quadric], indices: &[u32], vertex_positions: &[Vector3], vertex_cells: &[u32]) {
-	for i in (0..indices.len()).step_by(3) {
-		let i0 = indices[i + 0] as usize;
-		let i1 = indices[i + 1] as usize;
-		let i2 = indices[i + 2] as usize;
+	for abc in indices.chunks_exact(3) {
+		let i0 = abc[0] as usize;
+		let i1 = abc[1] as usize;
+		let i2 = abc[2] as usize;
 
 		let c0 = vertex_cells[i0] as usize;
 		let c1 = vertex_cells[i1] as usize;
@@ -930,20 +927,17 @@ fn fill_cell_quadrics(cell_quadrics: &mut [Quadric], indices: &[u32], vertex_pos
 }
 
 fn fill_cell_quadrics2(cell_quadrics: &mut [Quadric], vertex_positions: &[Vector3], vertex_cells: &[u32]) {
-	for i in 0..vertex_cells.len() {
-		let c = vertex_cells[i] as usize;
-		let v = vertex_positions[i];
-
+	for (c, v) in vertex_cells.iter().zip(vertex_positions.iter()) {
 		let q = Quadric::from_point(v.x, v.y, v.z, 1.0);
 
-		cell_quadrics[c] += q;
+		cell_quadrics[*c as usize] += q;
 	}
 }
 
 fn fill_cell_remap(cell_remap: &mut [u32], cell_errors: &mut [f32], vertex_cells: &[u32], cell_quadrics: &[Quadric], vertex_positions: &[Vector3]) {
-	for i in 0..vertex_cells.len() {
-		let cell = vertex_cells[i] as usize;
-		let error = cell_quadrics[cell].error(&vertex_positions[i]);
+	for ((i, c), v) in vertex_cells.iter().enumerate().zip(vertex_positions.iter()) {
+		let cell = *c as usize;
+		let error = cell_quadrics[cell].error(v);
 
 		if cell_remap[cell] == INVALID || cell_errors[cell] > error {
 			cell_remap[cell] = i as u32;
@@ -955,10 +949,10 @@ fn fill_cell_remap(cell_remap: &mut [u32], cell_errors: &mut [f32], vertex_cells
 fn filter_triangles(destination: &mut [u32], tritable: &mut HashMap<hash::VertexPosition, u32, hash::BuildPositionHasher>, indices: &[u32], vertex_cells: &[u32], cell_remap: &[u32]) -> usize {
 	let mut result = 0;
 
-	for i in (0..indices.len()).step_by(3) {
-		let c0 = vertex_cells[indices[i + 0] as usize] as usize;
-		let c1 = vertex_cells[indices[i + 1] as usize] as usize;
-		let c2 = vertex_cells[indices[i + 2] as usize] as usize;
+	for idx in indices.chunks_exact(3) {
+		let c0 = vertex_cells[idx[0] as usize] as usize;
+		let c1 = vertex_cells[idx[1] as usize] as usize;
+		let c2 = vertex_cells[idx[2] as usize] as usize;
 
 		if c0 != c1 && c0 != c2 && c1 != c2 {
 			let a = cell_remap[c0];
@@ -1081,8 +1075,8 @@ where
             f32::MAX
         };
 
-		for i in 0..vertices.len() {
-            collapse_remap[i] = i as u32;
+		for (i, r) in collapse_remap.iter_mut().enumerate() {
+            *r = i as u32;
         }
 
         fill_slice(&mut collapse_locked, false);
@@ -1106,8 +1100,8 @@ where
             break;
         }
 
-		remap_edge_loops(&mut loop_, vertices.len(), &collapse_remap);
-		remap_edge_loops(&mut loopback, vertices.len(), &collapse_remap);
+		remap_edge_loops(&mut loop_, &collapse_remap);
+		remap_edge_loops(&mut loopback, &collapse_remap);
 
 		let new_count = remap_index_buffer(&mut result[0..result_count], &collapse_remap);
 		assert!(new_count < result_count);
