@@ -748,7 +748,8 @@ fn shadow(mesh: &Mesh) {
 	let start = Instant::now();
 	// this index buffer can be used for position-only rendering using the same vertex data that the original index buffer uses
 	let mut shadow_indices = vec![0; mesh.indices.len()];
-	generate_shadow_index_buffer(&mut shadow_indices, &mesh.indices, &mesh.vertices, 0..std::mem::size_of::<f32>() * 3);
+	let position_stream = Stream::from_slice_with_subset(&mesh.vertices, 0..std::mem::size_of::<f32>() * 3);
+	generate_shadow_index_buffer(&mut shadow_indices, &mesh.indices, &position_stream);
 	let duration = start.elapsed();
 
 	// while you can't optimize the vertex data after shadow IB was constructed, you can and should optimize the shadow IB for vertex cache
@@ -911,6 +912,101 @@ fn spatial_sort_mesh_triangles(mesh: &Mesh) {
 	);
 }
 
+fn process_deinterleaved<P>(path: P) -> Result<(), tobj::LoadError> 
+where
+	P: AsRef<Path> + Clone + Debug
+{
+	// Most algorithms in the library work out of the box with deinterleaved geometry, but some require slightly special treatment;
+	// this code runs a simplified version of complete opt. pipeline using deinterleaved geo. There's no compression performed but you
+	// can trivially run it by quantizing all elements and running `encode_vertex_buffer` once for each vertex stream.
+	let (models, _materials) = tobj::load_obj(path.clone(), true)?;
+
+	let total_indices = models.iter().map(|m| m.mesh.indices.len()).sum();
+
+	let mut unindexed_pos = vec![[0.0; 3]; total_indices];
+	let mut unindexed_nrm = vec![[0.0; 3]; total_indices];
+	let mut unindexed_uv = vec![[0.0; 2]; total_indices];
+
+	let mut dst = 0;
+
+	for model in models.iter() {
+		let mesh = &model.mesh;
+		assert!(mesh.positions.len() % 3 == 0);
+
+		for i in &mesh.indices {
+			let src = *i as usize;
+
+			&unindexed_pos[dst].copy_from_slice(&mesh.positions[3*src..3*(src+1)]);
+
+			if !mesh.normals.is_empty() {
+				&unindexed_nrm[dst].copy_from_slice(&mesh.normals[3*src..3*(src+1)]);
+			}
+
+			if !mesh.texcoords.is_empty() {
+				&unindexed_uv[dst].copy_from_slice(&mesh.texcoords[2*src..2*(src+1)]);
+			}
+
+			dst += 1;
+		}
+	}
+
+	let start = Instant::now();
+
+	let streams = [
+		Stream::from_slice(&unindexed_pos),
+		Stream::from_slice(&unindexed_nrm),
+		Stream::from_slice(&unindexed_uv),
+	];
+
+	let mut remap = vec![0; total_indices];
+
+	let total_vertices = generate_vertex_remap_multi(&mut remap, None, &streams);
+
+	let mut indices = remap.clone();
+
+	let mut pos = vec![[0.0; 3]; total_vertices];
+	remap_vertex_buffer(&mut pos, &unindexed_pos, &remap);
+
+	let mut nrm = vec![[0.0; 3]; total_vertices];
+	remap_vertex_buffer(&mut nrm, &unindexed_nrm, &remap);
+
+	let mut uv = vec![[0.0; 2]; total_vertices];
+	remap_vertex_buffer(&mut uv, &unindexed_uv, &remap);
+
+	let reindex = start.elapsed();
+	let start = Instant::now();
+
+	optimize_vertex_cache(&mut indices, &remap, total_vertices);
+
+	optimize_vertex_fetch_remap(&mut remap, &indices);
+	let pos_copy = pos.clone();
+	remap_vertex_buffer(&mut pos, &pos_copy, &remap);
+	let nrm_copy = nrm.clone();
+	remap_vertex_buffer(&mut nrm, &nrm_copy, &remap);
+	let uv_copy = uv.clone();
+	remap_vertex_buffer(&mut uv, &uv_copy, &remap);
+
+	let optimize = start.elapsed();
+	let start = Instant::now();
+
+	// note: since shadow index buffer is computed based on regular vertex/index buffer, the stream points at the indexed data - not `unindexed_pos`
+	let shadow_stream = Stream::from_slice(&pos);
+
+	let mut shadow_indices = vec![0; total_indices];
+	generate_shadow_index_buffer_multi(&mut shadow_indices, &indices, &[shadow_stream]);
+
+	let shadow_indices_copy = shadow_indices.clone();
+	optimize_vertex_cache(&mut shadow_indices, &shadow_indices_copy, total_vertices);
+
+	let shadow = start.elapsed();
+
+	println!("Deintrlvd: {} vertices, reindexed in {:.2} msec, optimized in {:.2} msec, generated & optimized shadow indices in {:.2} msec",
+		total_vertices, reindex.as_micros() as f64 / 1000.0, optimize.as_micros() as f64 / 1000.0, shadow.as_micros() as f64 / 1000.0
+	);
+
+	Ok(())
+}
+
 fn process(mesh: &Mesh) {
     optimize(mesh, "Original", |_|{});
     optimize(mesh, "Random", opt_random_shuffle);
@@ -964,8 +1060,9 @@ fn process(mesh: &Mesh) {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     for argument in env::args().skip(1) {
         println!("{}", argument);
-        let mesh = Mesh::load(argument)?;
-        process(&mesh);
+        let mesh = Mesh::load(argument.clone())?;
+		process(&mesh);
+		process_deinterleaved(argument)?;
     }
 
     Ok(())
