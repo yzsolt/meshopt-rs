@@ -1,6 +1,6 @@
 //! **Experimental** spatial sorting
 
-use crate::util::{fill_slice, zero_inverse};
+use crate::util::zero_inverse;
 use crate::Vector3;
 use crate::vertex::{calc_pos_extents, Position};
 

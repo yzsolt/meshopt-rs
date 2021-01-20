@@ -1,7 +1,5 @@
 //! Vertex transform cache analysis and optimization
 
-use crate::util::fill_slice;
-
 #[derive(Default)]
 pub struct VertexCacheStatistics {
 	pub vertices_transformed: u32,
