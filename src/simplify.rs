@@ -318,32 +318,6 @@ where
         };
     }
 
-    /*
-    let mut minv = [f32::MAX; 3];
-	let mut maxv = [-f32::MAX; 3];
-
-	for (i, vertex) in vertices.iter().enumerate() {
-        let v = vertex.pos();
-
-        result[i] = Vector3 {
-            x: v[0],
-            y: v[1],
-            z: v[2],
-        };
-
-		for j in 0..3 {
-			minv[j] = minv[j].min(v[j]);
-			maxv[j] = maxv[j].max(v[j]);
-		}
-    }
-
-    let mut extent: f32 = 0.0;
-
-	extent = extent.max(maxv[0] - minv[0]);
-	extent = extent.max(maxv[1] - minv[1]);
-    extent = extent.max(maxv[2] - minv[2]);
-    */
-
 	let scale = zero_inverse(extent);
 
 	for pos in result {
@@ -394,8 +368,7 @@ impl Default for CollapseUnion {
 struct Collapse {
 	v0: u32,
 	v1: u32,
-
-	u: CollapseUnion
+	u: CollapseUnion,
 }
 
 impl AddAssign for Quadric {
@@ -748,8 +721,8 @@ fn perform_edge_collapses(
             continue;
         }
 
-		assert!(collapse_remap[r0] as usize == r0);
-		assert!(collapse_remap[r1] as usize == r1);
+		assert_eq!(collapse_remap[r0] as usize, r0);
+		assert_eq!(collapse_remap[r1] as usize, r1);
 
 		vertex_quadrics[r1] += vertex_quadrics[r0];
 
@@ -778,7 +751,7 @@ fn perform_edge_collapses(
                 collapse_remap[s0] = s1 as u32;
             }
             _ => {
-                assert!(wedge[i0] as usize == i0);
+                assert_eq!(wedge[i0] as usize, i0);
 
                 collapse_remap[i0] = i1 as u32;
             }
@@ -804,9 +777,9 @@ fn remap_index_buffer(indices: &mut [u32], collapse_remap: &[u32]) -> usize {
 		let v2 = collapse_remap[indices[i + 2] as usize];
 
 		// we never move the vertex twice during a single pass
-		assert!(collapse_remap[v0 as usize] == v0);
-		assert!(collapse_remap[v1 as usize] == v1);
-		assert!(collapse_remap[v2 as usize] == v2);
+		assert_eq!(collapse_remap[v0 as usize], v0);
+		assert_eq!(collapse_remap[v1 as usize], v1);
+		assert_eq!(collapse_remap[v2 as usize], v2);
 
 		if v0 != v1 && v0 != v2 && v1 != v2 {
 			indices[write + 0] = v0;
@@ -1007,7 +980,7 @@ pub fn simplify<Vertex>(destination: &mut[u32], indices: &[u32], vertices: &[Ver
 where
     Vertex: Position
 {
-	assert!(indices.len() % 3 == 0);
+	assert_eq!(indices.len() % 3, 0);
 	assert!(target_index_count <= indices.len());
 
 	let result = &mut destination[0..indices.len()];
@@ -1127,7 +1100,7 @@ pub fn simplify_sloppy<Vertex>(destination: &mut [u32], indices: &[u32], vertice
 where
     Vertex: Position
 {
-	assert!(indices.len() % 3 == 0);
+	assert_eq!(indices.len() % 3, 0);
 	assert!(target_index_count <= indices.len());
 
 	// we expect to get ~2 triangles/vertex in the output
