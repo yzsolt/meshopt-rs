@@ -1,5 +1,7 @@
 //! Vertex transform cache analysis and optimization
 
+use crate::INVALID_INDEX;
+
 #[derive(Default)]
 pub struct VertexCacheStatistics {
 	pub vertices_transformed: u32,
@@ -174,7 +176,7 @@ fn get_next_vertex_dead_end(dead_end: &[u32], dead_end_top: &mut usize, input_cu
 }
 
 fn get_next_vertex_neighbour(next_candidates: &[u32], live_triangles: &[u32], cache_timestamps: &[u32], timestamp: u32, cache_size: u32) -> u32 {
-	let mut best_candidate = u32::MAX;
+	let mut best_candidate = INVALID_INDEX;
 	let mut best_priority = -1;
 
 	for vertex in next_candidates {
@@ -212,9 +214,9 @@ fn get_next_triangle_dead_end(input_cursor: &mut usize, emitted_flags: &[bool]) 
 		.iter()
 		.position(|f| !*f)
 		.map(|p| (*input_cursor + p) as u32)
-		.unwrap_or(u32::MAX);
+		.unwrap_or(INVALID_INDEX);
 
-	*input_cursor = if triangle == u32::MAX { 
+	*input_cursor = if triangle == INVALID_INDEX { 
 		emitted_flags.len() 
 	} else { 
 		triangle as usize 
@@ -269,7 +271,7 @@ fn optimize_vertex_cache_table(destination: &mut [u32], indices: &[u32], vertex_
 
 	let mut output_triangle = 0;
 
-	while current_triangle != u32::MAX {
+	while current_triangle != INVALID_INDEX {
 		assert!(output_triangle < face_count);
 
 		let abc_begin = current_triangle as usize * 3;
@@ -325,7 +327,7 @@ fn optimize_vertex_cache_table(destination: &mut [u32], indices: &[u32], vertex_
 			}
 		}
 
-		let mut best_triangle = u32::MAX;
+		let mut best_triangle = INVALID_INDEX;
 		let mut best_score = 0.0;
 
 		// update cache positions, vertex scores and triangle scores, and find next best triangle
@@ -362,7 +364,7 @@ fn optimize_vertex_cache_table(destination: &mut [u32], indices: &[u32], vertex_
 		// step through input triangles in order if we hit a dead-end
 		current_triangle = best_triangle;
 
-		if current_triangle == u32::MAX { 
+		if current_triangle == INVALID_INDEX { 
 			current_triangle = get_next_triangle_dead_end(&mut input_cursor, &emitted_flags);
 		}
 	}
@@ -438,7 +440,7 @@ pub fn optimize_vertex_cache_fifo(destination: &mut [u32], indices: &[u32], vert
 
 	let mut output_triangle = 0;
 
-	while current_vertex != u32::MAX {
+	while current_vertex != INVALID_INDEX {
 		let next_candidates_begin = dead_end_top;
 
 		// emit all vertex neighbours
@@ -485,7 +487,7 @@ pub fn optimize_vertex_cache_fifo(destination: &mut [u32], indices: &[u32], vert
 		// get next vertex
 		current_vertex = get_next_vertex_neighbour(next_candidates, &live_triangles, &cache_timestamps, timestamp, cache_size);
 
-		if current_vertex == u32::MAX {
+		if current_vertex == INVALID_INDEX {
 			current_vertex = get_next_vertex_dead_end(&dead_end, &mut dead_end_top, &mut input_cursor, &live_triangles);
 		}
 	}

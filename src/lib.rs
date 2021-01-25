@@ -17,6 +17,8 @@ pub mod quantize;
 pub mod util;
 pub mod vertex;
 
+pub const INVALID_INDEX: u32 = u32::MAX;
+
 #[derive(Clone, Copy, Default)]
 struct Vector3 {
     x: f32,

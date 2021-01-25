@@ -3,6 +3,7 @@ use meshopt_rs::index::*;
 use meshopt_rs::index::buffer::*;
 use meshopt_rs::index::generator::*;
 use meshopt_rs::index::sequence::*;
+use meshopt_rs::INVALID_INDEX;
 use meshopt_rs::overdraw::*;
 use meshopt_rs::quantize::*;
 use meshopt_rs::simplify::*;
@@ -712,7 +713,7 @@ fn simplify_mesh_complete(mesh: &Mesh) {
 }
 
 fn stripify_mesh(mesh: &Mesh, use_restart: bool, desc: char) {
-	let restart_index = if use_restart { u32::MAX } else { 0 };
+	let restart_index = if use_restart { INVALID_INDEX } else { 0 };
 
 	// note: input mesh is assumed to be optimized for vertex cache and vertex fetch
 	let start = Instant::now();

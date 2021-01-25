@@ -1,5 +1,6 @@
 //! **Experimental** mesh and point cloud simplification
 
+use crate::INVALID_INDEX;
 use crate::util::{fill_slice, zero_inverse};
 use crate::Vector3;
 use crate::vertex::{calc_pos_extents, Position};
@@ -141,8 +142,6 @@ mod hash {
     pub type BuildIdHasher = BuildHasherDefault<IdHasher>;
 }
 
-const INVALID: u32 = u32::MAX;
-
 fn build_position_remap<Vertex>(remap: &mut [u32], wedge: &mut [u32], vertices: &[Vertex]) 
 where
     Vertex: Position
@@ -234,7 +233,7 @@ fn has_edge(adjacency: &EdgeAdjacency, a: u32, b: u32) -> bool {
 }
 
 fn classify_vertices(result: &mut [VertexKind], loop_: &mut [u32], loopback: &mut [u32], vertex_count: usize, adjacency: &EdgeAdjacency, remap: &[u32], wedge: &[u32]) {	
-	// incoming & outgoing open edges: `INVALID` if no open edges, i if there are more than 1
+	// incoming & outgoing open edges: `INVALID_INDEX` if no open edges, i if there are more than 1
 	// note that this is the same data as required in loop[] arrays; loop[] data is only valid for border/seam
 	// but here it's okay to fill the data out for other types of vertices as well
 	let openinc = loopback;
@@ -248,8 +247,8 @@ fn classify_vertices(result: &mut [VertexKind], loop_: &mut [u32], loopback: &mu
 
 		for target in data {
 			if !has_edge(adjacency, *target, vertex as u32) {
-				openinc[*target as usize] = if openinc[*target as usize] == INVALID { vertex as u32 } else { *target };
-				openout[vertex] = if openout[vertex] == INVALID { *target } else { vertex as u32 };
+				openinc[*target as usize] = if openinc[*target as usize] == INVALID_INDEX { vertex as u32 } else { *target };
+				openout[vertex] = if openout[vertex] == INVALID_INDEX { *target } else { vertex as u32 };
 			}
 		}
 	}
@@ -264,7 +263,7 @@ fn classify_vertices(result: &mut [VertexKind], loop_: &mut [u32], loopback: &mu
 				// note: we classify any vertices with no open edges as manifold
 				// this is technically incorrect - if 4 triangles share an edge, we'll classify vertices as manifold
 				// it's unclear if this is a problem in practice
-				if openi == INVALID && openo == INVALID {
+				if openi == INVALID_INDEX && openo == INVALID_INDEX {
 					result[i] = VertexKind::Manifold;
 				} else if openi != i as u32 && openo != i as u32 {
 					result[i] = VertexKind::Border;
@@ -280,8 +279,8 @@ fn classify_vertices(result: &mut [VertexKind], loop_: &mut [u32], loopback: &mu
                 let openow = openout[w] as usize;
 
 				// seam should have one open half-edge for each vertex, and the edges need to "connect" - point to the same vertex post-remap
-				if openiv != INVALID as usize && openiv != i && openov != INVALID as usize && openov != i &&
-				    openiw != INVALID as usize && openiw != w && openow != INVALID as usize && openow != w {
+				if openiv != INVALID_INDEX as usize && openiv != i && openov != INVALID_INDEX as usize && openov != i &&
+				    openiw != INVALID_INDEX as usize && openiw != w && openow != INVALID_INDEX as usize && openow != w {
 					if remap[openiv] == remap[openow] && remap[openov] == remap[openiw] {
 						result[i] = VertexKind::Seam;
 					} else {
@@ -794,7 +793,7 @@ fn remap_index_buffer(indices: &mut [u32], collapse_remap: &[u32]) -> usize {
 
 fn remap_edge_loops(loop_: &mut [u32], collapse_remap: &[u32]) {
 	for i in 0..loop_.len() {
-		if loop_[i] != INVALID {
+		if loop_[i] != INVALID_INDEX {
 			let l = loop_[i];
 			let r = collapse_remap[l as usize];
 
@@ -912,7 +911,7 @@ fn fill_cell_remap(cell_remap: &mut [u32], cell_errors: &mut [f32], vertex_cells
 		let cell = *c as usize;
 		let error = cell_quadrics[cell].error(v);
 
-		if cell_remap[cell] == INVALID || cell_errors[cell] > error {
+		if cell_remap[cell] == INVALID_INDEX || cell_errors[cell] > error {
 			cell_remap[cell] = i as u32;
 			cell_errors[cell] = error;
 		}
@@ -996,8 +995,8 @@ where
 
 	// classify vertices; vertex kind determines collapse rules, see `CAN_COLLAPSE`
 	let mut vertex_kind = vec![VertexKind::Manifold; vertices.len()];
-	let mut loop_ = vec![INVALID; vertices.len()];
-	let mut loopback = vec![INVALID; vertices.len()];
+	let mut loop_ = vec![INVALID_INDEX; vertices.len()];
+	let mut loopback = vec![INVALID_INDEX; vertices.len()];
 	classify_vertices(&mut vertex_kind, &mut loop_, &mut loopback, vertices.len(), &adjacency, &remap, &wedge);
 
 	let mut vertex_positions = vec![Vector3::default(); vertices.len()]; // TODO: spare init?
@@ -1188,7 +1187,7 @@ where
 	fill_cell_quadrics(&mut cell_quadrics, &indices, &vertex_positions, &vertex_cells);
 
 	// for each target cell, find the vertex with the minimal error
-	let mut cell_remap = vec![u32::MAX; cell_count];
+	let mut cell_remap = vec![INVALID_INDEX; cell_count];
 	let mut cell_errors = vec![0.0; cell_count];
 
 	fill_cell_remap(&mut cell_remap, &mut cell_errors, &vertex_cells, &cell_quadrics, &vertex_positions);
@@ -1303,7 +1302,7 @@ where
 	fill_cell_quadrics2(&mut cell_quadrics, &vertex_positions, &vertex_cells);
 
 	// for each target cell, find the vertex with the minimal error
-	let mut cell_remap = vec![u32::MAX; cell_count];
+	let mut cell_remap = vec![INVALID_INDEX; cell_count];
 	let mut cell_errors = vec![0.0; cell_count];
 
 	fill_cell_remap(&mut cell_remap, &mut cell_errors, &vertex_cells, &cell_quadrics, &vertex_positions);

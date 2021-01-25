@@ -1,8 +1,10 @@
 //! Mesh triangle list ↔ triangle strip conversion
 
+use crate::INVALID_INDEX;
+
 fn find_strip_first(buffer: &[[u32; 3]], valence: &[u32]) -> usize {
 	let mut index = 0;
-	let mut iv = u32::MAX;
+	let mut iv = INVALID_INDEX;
 
 	for (i, b) in buffer.iter().enumerate() {
         let va = valence[b[0] as usize];
@@ -43,7 +45,7 @@ fn find_strip_next(buffer: &[[u32; 3]], e: (u32, u32)) -> i32 {
 /// # Arguments
 ///
 /// * `destination`: must contain enough space for the target index buffer, worst case can be computed with [stripify_bound]
-/// * `restart_index`: should be `u32::MAX` or `0` to use degenerate triangles
+/// * `restart_index`: should be `INVALID_INDEX` or `0` to use degenerate triangles
 pub fn stripify(destination: &mut [u32], indices: &[u32], vertex_count: usize, restart_index: u32) -> usize {
 	assert!(indices.len() % 3 == 0);
 

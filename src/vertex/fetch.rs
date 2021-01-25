@@ -1,5 +1,6 @@
 //! Vertex fetch analysis and optimization
 
+use crate::INVALID_INDEX;
 use crate::util::fill_slice;
 
 use super::Position;
@@ -76,14 +77,14 @@ pub fn analyze_vertex_fetch(indices: &[u32], vertex_count: usize, vertex_size: u
 pub fn optimize_vertex_fetch_remap(destination: &mut [u32], indices: &[u32]) -> usize {
 	assert!(indices.len() % 3 == 0);
 
-    fill_slice(&mut destination[..], u32::MAX);
+    fill_slice(&mut destination[..], INVALID_INDEX);
 
 	let mut next_vertex = 0;
 
 	for index in indices {
         let index = *index as usize;
 
-		if destination[index] == u32::MAX {
+		if destination[index] == INVALID_INDEX {
             destination[index] = next_vertex as u32;
             next_vertex += 1;
 		}
@@ -109,7 +110,7 @@ where
 	assert!(indices.len() % 3 == 0);
 
 	// build vertex remap table
-	let mut vertex_remap = vec![u32::MAX; vertices.len()];
+	let mut vertex_remap = vec![INVALID_INDEX; vertices.len()];
 
 	let mut next_vertex = 0;
 
@@ -118,7 +119,7 @@ where
 
 		let remap = &mut vertex_remap[idx];
 
-		if *remap == u32::MAX { // vertex was not added to destination VB
+		if *remap == INVALID_INDEX { // vertex was not added to destination VB
 			// add vertex
             destination[next_vertex] = vertices[idx];
 

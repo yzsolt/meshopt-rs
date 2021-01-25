@@ -1,5 +1,6 @@
 //! Index buffer generation and index/vertex buffer remapping
 
+use crate::INVALID_INDEX;
 use crate::util::fill_slice;
 
 use std::collections::hash_map::Entry;
@@ -7,8 +8,6 @@ use std::collections::HashMap;
 use std::convert::TryInto;
 use std::hash::{BuildHasherDefault, Hasher};
 use std::ops::Range;
-
-const INVALID_INDEX: u32 = u32::MAX;
 
 #[derive(Default)]
 struct VertexHasher {

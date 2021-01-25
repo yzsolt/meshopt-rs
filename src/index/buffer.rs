@@ -1,5 +1,7 @@
 //! Index buffer encoding and decoding
 
+use crate::INVALID_INDEX;
+
 use std::io::{Read, Write};
 
 use super::{decode_v_byte, encode_v_byte, read_byte, write_byte, DecodeError, IndexEncodingVersion};
@@ -8,11 +10,11 @@ const INDEX_HEADER: u8 = 0xe0;
 
 type VertexFifo = [u32; 16];
 
-const DEFAULT_VERTEX_FIFO: VertexFifo = [u32::MAX; 16];
+const DEFAULT_VERTEX_FIFO: VertexFifo = [INVALID_INDEX; 16];
 
 type EdgeFifo = [[u32; 2]; 16];
 
-const DEFAULT_EDGE_FIFO: EdgeFifo = [[u32::MAX; 2]; 16];
+const DEFAULT_EDGE_FIFO: EdgeFifo = [[INVALID_INDEX; 2]; 16];
 
 const TRIANGLE_INDEX_ORDER: [[usize; 3]; 3] = [
     [0, 1, 2],
