@@ -246,11 +246,11 @@ impl<'a> std::hash::Hash for StreamVertex<'a> {
 ///
 /// To remap vertex buffers, you will need to call [remap_vertex_buffer] for each vertex stream.
 ///
-/// Note that binary equivalence considers all vertex_size bytes, including padding which should be zero-initialized.
+/// Note that binary equivalence considers all `Stream::subset` bytes, including padding which should be zero-initialized.
 ///
 /// # Arguments
 ///
-/// * `destination`: must contain enough space for the resulting remap table (`vertices.len()` elements)
+/// * `destination`: must contain enough space for the resulting remap table (`vertex_count` elements defined by `streams`)
 /// * `indices`: can be `None` if the input is unindexed
 pub fn generate_vertex_remap_multi(destination: &mut [u32], indices: Option<&[u32]>, streams: &[Stream]) -> usize {
     let vertex_count = streams[0].len();
@@ -266,7 +266,7 @@ pub fn generate_vertex_remap_multi(destination: &mut [u32], indices: Option<&[u3
 ///
 /// # Arguments
 ///
-/// * `destination`: must contain enough space for the resulting vertex buffer (unique_vertex_count elements, returned by [generate_vertex_remap])
+/// * `destination`: must contain enough space for the resulting vertex buffer (`unique_vertex_count` elements, returned by [generate_vertex_remap])
 /// * `vertices`: should have the initial vertex count and not the value returned by [generate_vertex_remap]
 pub fn remap_vertex_buffer<Vertex>(destination: &mut [Vertex], vertices: &[Vertex], remap: &[u32]) 
 where 
@@ -320,10 +320,10 @@ where
 
 /// Generates index buffer that can be used for more efficient rendering when only a subset of the vertex attributes is necessary.
 ///
-/// All vertices that are binary equivalent (considering `subset` bytes) map to the first vertex in the original vertex buffer.
+/// All vertices that are binary equivalent map to the first vertex in the original vertex buffer.
 /// This makes it possible to use the index buffer for Z pre-pass or shadowmap rendering, while using the original index buffer for regular rendering.
 ///
-/// Note that binary equivalence considers all `subset` bytes, including padding which should be zero-initialized.
+/// Note that binary equivalence considers all `Stream::subset` bytes, including padding which should be zero-initialized.
 ///
 /// # Arguments
 ///
@@ -334,10 +334,10 @@ pub fn generate_shadow_index_buffer(destination: &mut [u32], indices: &[u32], ve
 
 /// Generates index buffer that can be used for more efficient rendering when only a subset of the vertex attributes is necessary.
 ///
-/// All vertices that are binary equivalent (considering `subset` bytes) map to the first vertex in the original vertex buffer.
+/// All vertices that are binary equivalent map to the first vertex in the original vertex buffer.
 /// This makes it possible to use the index buffer for Z pre-pass or shadowmap rendering, while using the original index buffer for regular rendering.
 ///
-/// Note that binary equivalence considers all `subset` bytes, including padding which should be zero-initialized.
+/// Note that binary equivalence considers all `Stream::subset` bytes, including padding which should be zero-initialized.
 ///
 /// # Arguments
 ///
