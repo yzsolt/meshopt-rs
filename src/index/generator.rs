@@ -1,7 +1,7 @@
 //! Index buffer generation and index/vertex buffer remapping
 
 use crate::INVALID_INDEX;
-use crate::util::fill_slice;
+use crate::util::{as_bytes, fill_slice};
 
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
@@ -42,13 +42,6 @@ impl Hasher for VertexHasher {
 }
 
 type BuildVertexHasher = BuildHasherDefault<VertexHasher>;
-
-fn as_bytes<T>(data: &T) -> &[u8] {
-    unsafe { std::slice::from_raw_parts(
-        (data as *const T) as *const u8,
-        std::mem::size_of::<T>(),
-    ) }
-}
 
 fn generate_vertex_remap_inner<Vertex, Lookup>(destination: &mut [u32], indices: Option<&[u32]>, vertex_count: usize, lookup: Lookup) -> usize 
 where
@@ -133,7 +126,7 @@ impl<'a> Stream<'a> {
     pub fn from_slice<T>(slice: &'a [T]) -> Self {
         let value_size = std::mem::size_of::<T>();
 
-        let data = crate::util::as_bytes(slice);
+        let data = as_bytes(slice);
 
         Self::from_bytes(
             data,
@@ -172,7 +165,7 @@ impl<'a> Stream<'a> {
     pub fn from_slice_with_subset<T>(slice: &'a [T], subset: Range<usize>) -> Self {
         let value_size = std::mem::size_of::<T>();
 
-        let data = crate::util::as_bytes(slice);
+        let data = as_bytes(slice);
 
         Self::from_bytes(
             data,
@@ -195,7 +188,7 @@ impl<'a> Stream<'a> {
         let stride = stride * value_size;
         let subset = subset.start*value_size..subset.end*value_size;
 
-        let data = crate::util::as_bytes(slice);
+        let data = as_bytes(slice);
 
         Self {
             data,
