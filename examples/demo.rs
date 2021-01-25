@@ -108,7 +108,7 @@ impl Mesh {
 
         let mut result = Mesh::default();
 
-        let total_vertices = generate_vertex_remap(&mut remap, None, &vertices);
+        let total_vertices = generate_vertex_remap(&mut remap, None, &Stream::from_slice(&vertices));
 	
 		result.indices = remap;
     

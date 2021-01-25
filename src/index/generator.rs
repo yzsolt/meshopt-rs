@@ -101,14 +101,14 @@ where
 /// As a result, all vertices that are binary equivalent map to the same (new) location, with no gaps in the resulting sequence.
 /// Resulting remap table maps old vertices to new vertices and can be used in [remap_vertex_buffer]/[remap_index_buffer].
 ///
-/// Note that binary equivalence considers all vertex_size bytes, including padding which should be zero-initialized.
+/// Note that binary equivalence considers all `Stream::subset` bytes, including padding which should be zero-initialized.
 ///
 /// # Arguments
 ///
-/// * `destination`: must contain enough space for the resulting remap table (`vertices.len()` elements)
+/// * `destination`: must contain enough space for the resulting remap table (`vertex_count` elements defined by `vertices`)
 /// * `indices`: can be `None` if the input is unindexed
-pub fn generate_vertex_remap<Vertex>(destination: &mut [u32], indices: Option<&[u32]>, vertices: &[Vertex]) -> usize {
-    generate_vertex_remap_inner(destination, indices, vertices.len(), |index| as_bytes(&vertices[index]))
+pub fn generate_vertex_remap(destination: &mut [u32], indices: Option<&[u32]>, vertices: &Stream) -> usize {
+    generate_vertex_remap_inner(destination, indices, vertices.len(), |index| vertices.get(index))
 }
 
 /// A stream of value groups which are meant to be used together (e.g. 3 floats representing a vertex position).
