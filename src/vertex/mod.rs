@@ -1,6 +1,7 @@
 pub mod cache;
 pub mod buffer;
 pub mod fetch;
+pub mod filter;
 
 #[derive(Debug)]
 pub enum DecodeError {
