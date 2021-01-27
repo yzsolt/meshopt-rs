@@ -168,10 +168,8 @@ pub fn build_meshlets(destination: &mut [Meshlet], indices: &[u32], vertex_count
 
 	let mut offset = 0;
 
-	for i in (0..indices.len()).step_by(3) {
-        let a = indices[i + 0] as usize;
-        let b = indices[i + 1] as usize;
-        let c = indices[i + 2] as usize;
+	for abc in indices.chunks_exact(3) {
+        let (a, b, c) = (abc[0] as usize, abc[1] as usize, abc[2] as usize);
 
 		assert!(a < vertex_count && b < vertex_count && c < vertex_count);
 
@@ -262,10 +260,9 @@ where
 
 	let vertex_count = vertices.len();
 
-	for i in (0..indices.len()).step_by(3) {
-        let a = indices[i + 0] as usize;
-        let b = indices[i + 1] as usize;
-        let c = indices[i + 2] as usize;
+	for abc in indices.chunks_exact(3) {
+		let (a, b, c) = (abc[0] as usize, abc[1] as usize, abc[2] as usize);
+
         assert!(a < vertex_count && b < vertex_count && c < vertex_count);
 
 		let p0 = vertices[a].pos();

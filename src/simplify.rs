@@ -486,10 +486,8 @@ impl Quadric {
 }
 
 fn fill_face_quadrics(vertex_quadrics: &mut [Quadric], indices: &[u32], vertex_positions: &[Vector3], remap: &[u32]) {
-	for i in (0..indices.len()).step_by(3) {
-		let i0 = indices[i + 0] as usize;
-		let i1 = indices[i + 1] as usize;
-		let i2 = indices[i + 2] as usize;
+	for i in indices.chunks_exact(3) {
+        let (i0, i1, i2) = (i[0] as usize, i[1] as usize, i[2] as usize);
 
 		let q = Quadric::from_triangle(&vertex_positions[i0], &vertex_positions[i1], &vertex_positions[i2], 1.0);
 
@@ -500,12 +498,12 @@ fn fill_face_quadrics(vertex_quadrics: &mut [Quadric], indices: &[u32], vertex_p
 }
 
 fn fill_edge_quadrics(vertex_quadrics: &mut [Quadric], indices: &[u32], vertex_positions: &[Vector3], remap: &[u32], vertex_kind: &[VertexKind], loop_: &[u32], loopback: &[u32]) {
-	for i in (0..indices.len()).step_by(3) {
+	for i in indices.chunks_exact(3) {
 		const NEXT: [usize; 3] = [1, 2, 0];
 
 		for e in 0..3 {
-			let i0 = indices[i + e] as usize;
-			let i1 = indices[i + NEXT[e]] as usize;
+			let i0 = i[e] as usize;
+			let i1 = i[NEXT[e]] as usize;
 
 			let k0 = vertex_kind[i0];
 			let k1 = vertex_kind[i1];
@@ -530,7 +528,7 @@ fn fill_edge_quadrics(vertex_quadrics: &mut [Quadric], indices: &[u32], vertex_p
                 continue;
             }
 
-			let i2 = indices[i + NEXT[NEXT[e]]] as usize;
+			let i2 = i[NEXT[NEXT[e]]] as usize;
 
 			// we try hard to maintain border edge geometry; seam edges can move more freely
 			// due to topological restrictions on collapses, seam quadrics slightly improves collapse structure but aren't critical
@@ -554,12 +552,12 @@ fn fill_edge_quadrics(vertex_quadrics: &mut [Quadric], indices: &[u32], vertex_p
 fn pick_edge_collapses(collapses: &mut [Collapse], indices: &[u32], remap: &[u32], vertex_kind: &[VertexKind], loop_: &[u32]) -> usize {
 	let mut collapse_count = 0;
 
-	for i in (0..indices.len()).step_by(3) {
+	for i in indices.chunks_exact(3) {
 		const NEXT: [usize; 3] = [1, 2, 0];
 
 		for e in 0..3 {
-			let i0 = indices[i + e] as usize;
-			let i1 = indices[i + NEXT[e]] as usize;
+			let i0 = i[e] as usize;
+			let i1 = i[NEXT[e]] as usize;
 
 			// this can happen either when input has a zero-length edge, or when we perform collapses for complex
 			// topology w/seams and collapse a manifold vertex that connects to both wedges onto one of them

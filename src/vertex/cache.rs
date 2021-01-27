@@ -33,11 +33,8 @@ pub fn analyze_vertex_cache(indices: &[u32], vertex_count: usize, cache_size: us
 
 	let mut timestamp = cache_size + 1;
 
-	for i in (0..indices.len()).step_by(3) {
-        let a = indices[i + 0] as usize;
-        let b = indices[i + 1] as usize;
-        let c = indices[i + 2] as usize;
-		assert!(a < vertex_count && b < vertex_count && c < vertex_count);
+	for (i, abc) in indices.chunks_exact(3).enumerate() {
+        let (a, b, c) = (abc[0] as usize, abc[1] as usize, abc[2] as usize);
 
 		let ac = ((timestamp - cache_timestamps[a] as usize) > cache_size) as usize;
 		let bc = ((timestamp - cache_timestamps[b] as usize) > cache_size) as usize;
@@ -56,7 +53,7 @@ pub fn analyze_vertex_cache(indices: &[u32], vertex_count: usize, cache_size: us
 
 		// update cache and add vertices to warp
 		for j in 0..3 {
-			let index = indices[i + j] as usize;
+			let index = indices[i * 3 + j] as usize;
 
 			if timestamp - cache_timestamps[index] as usize > cache_size {
                 cache_timestamps[index] = timestamp as u32;

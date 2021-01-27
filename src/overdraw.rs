@@ -171,10 +171,10 @@ where
 	for axis in 0..3 {
 		*buffer = OverdrawBuffer::default();
 
-		for i in (0..indices.len()).step_by(3) {
-			let vn0 = &triangles[3 * (i + 0) .. (3 * (i + 0) + 3)];
-			let vn1 = &triangles[3 * (i + 1) .. (3 * (i + 1) + 3)];
-			let vn2 = &triangles[3 * (i + 2) .. (3 * (i + 2) + 3)];
+		for vn in triangles.chunks_exact(9) {
+			let vn0 = &vn[0..3];
+			let vn1 = &vn[3..6];
+			let vn2 = &vn[6..9];
 
 			match axis {
 				0 => rasterize(&mut buffer, Vector3::new(vn0[2], vn0[1], vn0[0]), Vector3::new(vn1[2], vn1[1], vn1[0]), Vector3::new(vn2[2], vn2[1], vn2[0])),
@@ -232,10 +232,10 @@ where
 		let mut cluster_centroid = [0.0; 3];
 		let mut cluster_normal = [0.0f32; 3];
 
-		for i in cluster.step_by(3) {
-			let p0 = vertices[indices[i + 0] as usize].pos();
-			let p1 = vertices[indices[i + 1] as usize].pos();
-			let p2 = vertices[indices[i + 2] as usize].pos();
+		for i in indices[cluster].chunks_exact(3) {
+			let p0 = vertices[i[0] as usize].pos();
+			let p1 = vertices[i[1] as usize].pos();
+			let p2 = vertices[i[2] as usize].pos();
 
 			let p10 = [p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]];
 			let p20 = [p2[0] - p0[0], p2[1] - p0[1], p2[2] - p0[2]];

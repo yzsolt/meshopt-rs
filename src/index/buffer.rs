@@ -101,12 +101,14 @@ fn get_code_aux_index(v: u8, table: &[u8]) -> i32 {
         .unwrap_or(-1)
 }
 
-fn write_triangle<T>(destination: &mut [T], offset: usize, a: u32, b: u32, c: u32) 
-where T: From<u32>
+fn write_triangle<T>(destination: &mut [T], a: u32, b: u32, c: u32) 
+where T: Copy + From<u32>
 {
-	destination[offset + 0] = T::from(a);
-	destination[offset + 1] = T::from(b);
-	destination[offset + 2] = T::from(c);
+	destination.copy_from_slice(&[
+		T::from(a),
+		T::from(b),
+		T::from(c),
+	]);
 }
 
 /// Encodes index data into an array of bytes that is generally much smaller (<1.5 bytes/triangle) and compresses better (<1 bytes/triangle) compared to original.
@@ -332,7 +334,7 @@ pub fn encode_index_buffer_bound(index_count: usize, vertex_count: usize) -> usi
 ///
 /// * `destination`: must contain the exact space for the resulting index buffer
 pub fn decode_index_buffer<T>(destination: &mut [T], buffer: &[u8]) -> Result<(), DecodeError> 
-where T: From<u32>
+where T: Copy + From<u32>
 {
 	assert_eq!(destination.len() % 3, 0);
 	//assert!(index_size == 2 || index_size == 4);
@@ -374,7 +376,7 @@ where T: From<u32>
 		(code, std::io::Cursor::new(data), codeaux_table, data_safe_end)
 	};
 
-	for i in (0..destination.len()).step_by(3) {
+	for dst in destination.chunks_exact_mut(3) {
 		// make sure we have enough data to read for a triangle
 		// each triangle reads at most 16 bytes of data: 1b for codeaux and 5b for each free index
 		// after this we can be sure we can read without extra bounds checks
@@ -404,7 +406,7 @@ where T: From<u32>
 				next += fec0 as u32;
 
 				// output triangle
-				write_triangle(destination, i, a, b, c);
+				write_triangle(dst, a, b, c);
 
 				// push vertex/edge fifo must match the encoding step *exactly* otherwise the data will not be decoded correctly
 				push_vertex_fifo(&mut vertexfifo, c, &mut vertexfifooffset, Some(fec0));
@@ -422,7 +424,7 @@ where T: From<u32>
 				last = c;
 
 				// output triangle
-				write_triangle(destination, i, a, b, c);
+				write_triangle(dst, a, b, c);
 
 				// push vertex/edge fifo must match the encoding step *exactly* otherwise the data will not be decoded correctly
 				push_vertex_fifo(&mut vertexfifo, c, &mut vertexfifooffset, None);
@@ -457,7 +459,7 @@ where T: From<u32>
 				next += fec0 as u32;
 
 				// output triangle
-				write_triangle(destination, i, a, b, c);
+				write_triangle(dst, a, b, c);
 
 				// push vertex/edge fifo must match the encoding step *exactly* otherwise the data will not be decoded correctly
 				push_vertex_fifo(&mut vertexfifo, a, &mut vertexfifooffset, None);
@@ -503,7 +505,7 @@ where T: From<u32>
 				}
 
 				// output triangle
-				write_triangle(destination, i, a, b, c);
+				write_triangle(dst, a, b, c);
 
 				// push vertex/edge fifo must match the encoding step *exactly* otherwise the data will not be decoded correctly
 				push_vertex_fifo(&mut vertexfifo, a, &mut vertexfifooffset, None);
