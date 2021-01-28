@@ -15,6 +15,12 @@ Experimental features (hidden behind `MESHOPTIMIZER_EXPERIMENTAL` in the origina
 meshopt-rs = { version = "0.1", features = ["experimental"] }
 ```
 
+## Performance
+
+Depends on the algorithm: some are in the same ballpark as the original, most are slightly (10-20%) and a few are much (50-100%) slower than the original implementation. Only a small amount of performance work has been done so far. Ideally all algorithms should reach at least 90-95% of the original implementation's performance.
+
+Also note that SIMD support (utilized by vertex buffer decoding/filtering) is [currently missing](https://github.com/yzsolt/meshopt-rs/issues/1).
+
 ## Contributing
 
 `meshopt-rs` is licensed under MIT, just like `meshoptimizer`. Contributions are welcome!
