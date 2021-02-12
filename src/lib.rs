@@ -140,6 +140,7 @@ impl Vector3 {
         }
     }
 
+    #[cfg(feature = "experimental")]
     pub fn normalize(&mut self) -> f32 {
         let length = (self.x * self.x + self.y * self.y + self.z * self.z).sqrt();
 
