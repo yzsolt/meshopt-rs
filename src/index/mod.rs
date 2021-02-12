@@ -7,6 +7,7 @@ use crate::util::{read_byte, write_byte};
 
 use std::io::{Read, Write};
 
+#[derive(Debug)]
 pub enum DecodeError {
 	InvalidHeader,
 	UnsupportedVersion,
