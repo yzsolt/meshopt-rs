@@ -70,7 +70,10 @@ impl Mesh {
     {
         let start = Instant::now();
 
-        let (models, _materials) = tobj::load_obj(path.clone(), true)?;
+        let (models, _materials) = tobj::load_obj(path.clone(), &tobj::LoadOptions {
+			triangulate: true,
+			..Default::default()
+		})?;
 
         let mut vertices = Vec::new();
         let mut indices = Vec::new();
@@ -918,7 +921,10 @@ where
 	// Most algorithms in the library work out of the box with deinterleaved geometry, but some require slightly special treatment;
 	// this code runs a simplified version of complete opt. pipeline using deinterleaved geo. There's no compression performed but you
 	// can trivially run it by quantizing all elements and running `encode_vertex_buffer` once for each vertex stream.
-	let (models, _materials) = tobj::load_obj(path.clone(), true)?;
+	let (models, _materials) = tobj::load_obj(path.clone(), &tobj::LoadOptions {
+        triangulate: true,
+        ..Default::default()
+    })?;
 
 	let total_indices = models.iter().map(|m| m.mesh.indices.len()).sum();
 
