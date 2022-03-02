@@ -2,7 +2,7 @@
 name = "meshopt-rs"
 version = "0.1.0"
 authors = ["yzsolt"]
-edition = "2018"
+edition = "2021"
 
 [features]
 # Experimental APIs have unstable interface and might have implementation that's not fully tested or optimized

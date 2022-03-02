@@ -183,7 +183,7 @@ fn encode_vertex_block(mut data: &mut [u8], vertex_data: &[u8], vertex_count: us
 	}
 
 	let offset = vertex_size * (vertex_count - 1);
-	&last_vertex[0..vertex_size].copy_from_slice(&vertex_data[offset..offset+vertex_size]);
+	last_vertex[0..vertex_size].copy_from_slice(&vertex_data[offset..offset+vertex_size]);
 
 	Some(written_sum)
 }
@@ -313,10 +313,10 @@ fn decode_vertex_block(data: &mut Cursor<&[u8]>, vertex_data: &mut [u8], vertex_
 		}
 	}
 
-	&vertex_data[0..vertex_count * vertex_size].copy_from_slice(&transposed[0..vertex_count * vertex_size]);
+	vertex_data[0..vertex_count * vertex_size].copy_from_slice(&transposed[0..vertex_count * vertex_size]);
 
 	let offset = vertex_size * (vertex_count - 1);
-	&last_vertex[0..vertex_size].copy_from_slice(&transposed[offset..offset+vertex_size]);
+	last_vertex[0..vertex_size].copy_from_slice(&transposed[offset..offset+vertex_size]);
 
 	Ok(())
 }
@@ -352,11 +352,11 @@ pub fn encode_vertex_buffer<Vertex>(buffer: &mut [u8], vertices: &[Vertex], vers
 
 	let mut first_vertex = [0; 256];
 	if !vertices.is_empty() {
-		&first_vertex[0..vertex_size].copy_from_slice(&vertex_data[0..vertex_size]);
+		first_vertex[0..vertex_size].copy_from_slice(&vertex_data[0..vertex_size]);
 	}
 
 	let mut last_vertex = [0; 256];
-	&last_vertex[0..vertex_size].copy_from_slice(&first_vertex[0..vertex_size]);
+	last_vertex[0..vertex_size].copy_from_slice(&first_vertex[0..vertex_size]);
 
 	let vertex_block_size = get_vertex_block_size(vertex_size);
 
@@ -450,7 +450,7 @@ pub fn decode_vertex_buffer<Vertex>(destination: &mut [Vertex], buffer: &[u8]) -
 	}
 
 	let mut last_vertex = [0; 256];
-	&last_vertex[0..vertex_size].copy_from_slice(&buffer[buffer.len()-vertex_size..]);
+	last_vertex[0..vertex_size].copy_from_slice(&buffer[buffer.len()-vertex_size..]);
 
 	let vertex_block_size = get_vertex_block_size(vertex_size);
 

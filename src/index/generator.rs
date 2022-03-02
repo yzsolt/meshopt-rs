@@ -5,7 +5,6 @@ use crate::util::fill_slice;
 
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
-use std::convert::TryInto;
 use std::hash::{BuildHasherDefault, Hasher};
 
 #[derive(Default)]

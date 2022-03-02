@@ -62,7 +62,6 @@ fn build_edge_adjacency(adjacency: &mut EdgeAdjacency, indices: &[u32], vertex_c
 }
 
 mod hash {
-    use std::convert::TryInto;
     use std::hash::{BuildHasherDefault, Hash, Hasher};
 
     #[derive(Clone)]
@@ -937,7 +936,7 @@ fn filter_triangles(destination: &mut [u32], tritable: &mut HashMap<hash::Vertex
 				abc.rotate_right(1);
             };
             
-			&destination[result*3..result*3+3].copy_from_slice(&abc);
+			destination[result*3..result*3+3].copy_from_slice(&abc);
 			
 			let p = hash::VertexPosition(unsafe { std::mem::transmute(abc) });
             

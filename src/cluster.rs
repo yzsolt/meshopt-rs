@@ -4,8 +4,6 @@ use crate::quantize::quantize_snorm;
 use crate::util::zero_inverse;
 use crate::vertex::Position;
 
-use std::convert::TryInto;
-
 /// Bounds returned by `compute_cluster/meshlet_bounds`.
 ///
 /// `cone_axis_s8` and `cone_cutoff_s8` are stored in 8-bit SNORM format; decode them using `x/127.0`.

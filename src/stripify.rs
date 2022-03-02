@@ -77,7 +77,7 @@ pub fn stripify(destination: &mut [u32], indices: &[u32], vertex_count: usize, r
 
 		// fill triangle buffer
 		while buffer_size < buffer.len() && index_offset < index_count {
-			&buffer[buffer_size].copy_from_slice(&indices[index_offset..index_offset+3]);
+			buffer[buffer_size].copy_from_slice(&indices[index_offset..index_offset+3]);
 
 			buffer_size += 1;
 			index_offset += 3;
@@ -186,7 +186,7 @@ pub fn stripify(destination: &mut [u32], indices: &[u32], vertex_count: usize, r
                     strip_size += 1;
                 }
 
-                &destination[strip_size..strip_size+3].copy_from_slice(&abc);
+                destination[strip_size..strip_size+3].copy_from_slice(&abc);
                 strip_size += 3;
 
 				// new strip always starts with the same edge winding
@@ -210,7 +210,7 @@ pub fn stripify(destination: &mut [u32], indices: &[u32], vertex_count: usize, r
 					(abc[1], abc[2]) 
 				};
                 
-                &destination[strip_size..strip_size+3].copy_from_slice(&[abc[0], e0, e1]);
+                destination[strip_size..strip_size+3].copy_from_slice(&[abc[0], e0, e1]);
                 strip_size += 3;
 
 				strip[0] = e0;

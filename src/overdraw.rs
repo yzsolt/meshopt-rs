@@ -495,7 +495,7 @@ where
 
 		let cluster_size = cluster_end - cluster_begin;
 
-		&destination[offset..offset+cluster_size].copy_from_slice(&indices[cluster_begin..cluster_end]);
+		destination[offset..offset+cluster_size].copy_from_slice(&indices[cluster_begin..cluster_end]);
 
 		offset += cluster_size;
 	}

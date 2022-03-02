@@ -154,8 +154,6 @@ impl Mesh {
 	}
 
 	fn hash_range(bytes: &[u8]) -> u32{
-		use std::convert::TryInto;
-
         // MurmurHash2
         const M: u32 = 0x5bd1e995;
         const R: i32 = 24;
@@ -664,7 +662,7 @@ fn simplify_mesh_complete(mesh: &Mesh) {
 
 	for i in 0..lods.len() {
 		let offset = lod_index_offsets[i];
-		&indices[offset..offset+lods[i].len()].copy_from_slice(&lods[i]);
+		indices[offset..offset+lods[i].len()].copy_from_slice(&lods[i]);
 	}
 
 	let mut vertices = mesh.vertices.clone();
@@ -937,14 +935,14 @@ where
 		for i in &mesh.indices {
 			let src = *i as usize;
 
-			&unindexed_pos[dst].copy_from_slice(&mesh.positions[3*src..3*(src+1)]);
+			unindexed_pos[dst].copy_from_slice(&mesh.positions[3*src..3*(src+1)]);
 
 			if !mesh.normals.is_empty() {
-				&unindexed_nrm[dst].copy_from_slice(&mesh.normals[3*src..3*(src+1)]);
+				unindexed_nrm[dst].copy_from_slice(&mesh.normals[3*src..3*(src+1)]);
 			}
 
 			if !mesh.texcoords.is_empty() {
-				&unindexed_uv[dst].copy_from_slice(&mesh.texcoords[2*src..2*(src+1)]);
+				unindexed_uv[dst].copy_from_slice(&mesh.texcoords[2*src..2*(src+1)]);
 			}
 
 			dst += 1;
