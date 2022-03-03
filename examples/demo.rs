@@ -1,18 +1,22 @@
-use meshopt_rs::cluster::*;
 use meshopt_rs::index::*;
 use meshopt_rs::index::buffer::*;
 use meshopt_rs::index::generator::*;
-use meshopt_rs::index::sequence::*;
 use meshopt_rs::{INVALID_INDEX, Stream};
 use meshopt_rs::overdraw::*;
 use meshopt_rs::quantize::*;
-use meshopt_rs::simplify::*;
-use meshopt_rs::spatial_order::*;
 use meshopt_rs::stripify::*;
 use meshopt_rs::vertex::*;
 use meshopt_rs::vertex::buffer::*;
 use meshopt_rs::vertex::cache::*;
 use meshopt_rs::vertex::fetch::*;
+
+#[cfg(feature = "experimental")]
+use meshopt_rs::{
+	cluster::*, 
+	index::sequence::*, 
+	simplify::*,
+	spatial_order::*, 
+};
 
 use std::env;
 use std::fmt::Debug;
@@ -441,6 +445,7 @@ fn encode_index(mesh: &Mesh, desc: char) {
 	);
 }
 
+#[cfg(feature = "experimental")]
 fn encode_index_sequence1(data: &[u32], vertex_count: usize, desc: char) {
 	// allocate result outside of the timing loop to exclude memset() from decode timing
 	let mut result = vec![0; data.len()];
@@ -533,6 +538,7 @@ where
 	);
 }
 
+#[cfg(feature = "experimental")]
 fn simplify_mesh(mesh: &Mesh) {
     let threshold = 0.2;
 
@@ -559,6 +565,7 @@ fn simplify_mesh(mesh: &Mesh) {
     );
 }
 
+#[cfg(feature = "experimental")]
 fn simplify_mesh_sloppy(mesh: &Mesh, threshold: f32) {
 	let mut lod = Mesh::default();
 
@@ -582,6 +589,7 @@ fn simplify_mesh_sloppy(mesh: &Mesh, threshold: f32) {
 	);
 }
 
+#[cfg(feature = "experimental")]
 fn simplify_mesh_points(mesh: &Mesh, threshold: f32) {
 	let start = Instant::now();
 
@@ -599,6 +607,7 @@ fn simplify_mesh_points(mesh: &Mesh, threshold: f32) {
 	);
 }
 
+#[cfg(feature = "experimental")]
 fn simplify_mesh_complete(mesh: &Mesh) {
 	const LOD_COUNT: usize = 5;
 
@@ -777,6 +786,7 @@ fn shadow(mesh: &Mesh) {
     );
 }
 
+#[cfg(feature = "experimental")]
 fn meshlets(mesh: &Mesh) {
 	const MAX_VERTICES: usize = 64;
 	const MAX_TRIANGLES: usize = 126;
@@ -850,6 +860,7 @@ fn meshlets(mesh: &Mesh) {
 	);
 }
 
+#[cfg(feature = "experimental")]
 fn spatial_sort_mesh(mesh: &Mesh) {
 	let mut pv = vec![PackedVertexOct::default(); mesh.vertices.len()];
 	pack_mesh_oct(&mut pv, &mesh.vertices);
@@ -877,6 +888,7 @@ fn spatial_sort_mesh(mesh: &Mesh) {
 	);
 }
 
+#[cfg(feature = "experimental")]
 fn spatial_sort_mesh_triangles(mesh: &Mesh) {
 	let mut copy = mesh.clone();
 
@@ -1037,6 +1049,7 @@ fn process(mesh: &Mesh) {
 	stripify_mesh(&copy, true, 'R');
     stripify_mesh(&copystrip, true, 'S');
     
+	#[cfg(feature = "experimental")]
     meshlets(&copy);
 	shadow(&copy);
 
@@ -1047,19 +1060,23 @@ fn process(mesh: &Mesh) {
 	let size = stripify(&mut strip, &copystrip.indices, copystrip.vertices.len(), 0);
 	strip.resize(size, 0);
 
+	#[cfg(feature = "experimental")]
 	encode_index_sequence1(&mut strip, copystrip.vertices.len(), 'D');
 
 	pack_vertex(&copy);
 	encode_vertex(&copy);
 	encode_vertex_oct(&copy);
 
-    simplify_mesh(mesh);
-	simplify_mesh_sloppy(mesh, 0.2);
-	simplify_mesh_complete(mesh);
-	simplify_mesh_points(mesh, 0.2);
+	#[cfg(feature = "experimental")]
+	{
+		simplify_mesh(mesh);
+		simplify_mesh_sloppy(mesh, 0.2);
+		simplify_mesh_complete(mesh);
+		simplify_mesh_points(mesh, 0.2);
 
-	spatial_sort_mesh(mesh);
-	spatial_sort_mesh_triangles(mesh);
+		spatial_sort_mesh(mesh);
+		spatial_sort_mesh_triangles(mesh);
+	}
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
