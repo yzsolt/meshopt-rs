@@ -2,14 +2,6 @@
 
 use std::io::{Read, Write};
 
-// Polyfill until slice_fill feature stabilizes
-// TODO: check if it optimizes to memset
-pub(crate) fn fill_slice<T: Clone>(slice: &mut [T], value: T) {
-    for el in slice {
-        *el = value.clone();
-    }
-}
-
 #[inline(always)]
 pub(crate) fn zero_inverse(value: f32) -> f32 {
     if value != 0.0 {

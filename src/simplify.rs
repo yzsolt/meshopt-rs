@@ -1,6 +1,6 @@
 //! **Experimental** mesh and point cloud simplification
 
-use crate::util::{fill_slice, zero_inverse};
+use crate::util::zero_inverse;
 use crate::vertex::{calc_pos_extents, Position};
 use crate::Vector3;
 use crate::INVALID_INDEX;
@@ -1163,7 +1163,7 @@ where
             *r = i as u32;
         }
 
-        fill_slice(&mut collapse_locked, false);
+        collapse_locked.fill(false);
 
         let collapses = perform_edge_collapses(
             &mut collapse_remap,

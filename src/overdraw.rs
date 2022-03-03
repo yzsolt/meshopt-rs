@@ -1,7 +1,7 @@
 //! Overdraw analysis and optimization
 
 use crate::quantize::quantize_unorm;
-use crate::util::{fill_slice, zero_inverse};
+use crate::util::zero_inverse;
 use crate::vertex::{calc_pos_extents, Position};
 use crate::Vector3;
 
@@ -533,7 +533,7 @@ where
     let hard_cluster_count = generate_hard_boundaries(&mut hard_clusters, indices, CACHE_SIZE, &mut cache_timestamps);
 
     // generate soft boundaries
-    fill_slice(&mut cache_timestamps, 0);
+    cache_timestamps.fill(0);
     let mut soft_clusters = vec![0u32; indices.len() / 3 + 1];
     let soft_cluster_count = generate_soft_boundaries(
         &mut soft_clusters,

@@ -1,6 +1,5 @@
 //! Index buffer generation and index/vertex buffer remapping
 
-use crate::util::fill_slice;
 use crate::{Stream, INVALID_INDEX};
 
 use std::collections::hash_map::Entry;
@@ -57,7 +56,7 @@ where
     };
     assert_eq!(index_count % 3, 0);
 
-    fill_slice(destination, INVALID_INDEX);
+    destination.fill(INVALID_INDEX);
 
     let mut table = HashMap::with_capacity_and_hasher(vertex_count, BuildVertexHasher::default());
 

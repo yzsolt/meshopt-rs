@@ -1,6 +1,6 @@
 //! Vertex buffer encoding and decoding
 
-use crate::util::{as_bytes, as_mut_bytes, fill_slice, read_byte, write_byte, write_exact};
+use crate::util::{as_bytes, as_mut_bytes, read_byte, write_byte, write_exact};
 
 use std::io::{Cursor, Read, Write};
 
@@ -120,7 +120,7 @@ fn encode_bytes(data: &mut [u8], buffer: &[u8]) -> Option<usize> {
 
     let (header, mut data) = data.split_at_mut(header_size);
 
-    fill_slice(header, 0);
+    header.fill(0);
 
     let mut written = header_size;
 
@@ -418,7 +418,7 @@ pub fn encode_vertex_buffer<Vertex>(
     // write first vertex to the end of the stream and pad it to 32 bytes; this is important to simplify bounds checks in decoder
     if vertex_size < TAIL_MAX_SIZE {
         let written = TAIL_MAX_SIZE - vertex_size;
-        fill_slice(&mut data[0..written], 0);
+        data[0..written].fill(0);
         data = &mut data[written..];
         written_sum += written;
     }

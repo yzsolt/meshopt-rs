@@ -1,6 +1,5 @@
 //! Vertex fetch analysis and optimization
 
-use crate::util::fill_slice;
 use crate::INVALID_INDEX;
 
 use super::Position;
@@ -77,7 +76,7 @@ pub fn analyze_vertex_fetch(indices: &[u32], vertex_count: usize, vertex_size: u
 pub fn optimize_vertex_fetch_remap(destination: &mut [u32], indices: &[u32]) -> usize {
     assert!(indices.len() % 3 == 0);
 
-    fill_slice(&mut destination[..], INVALID_INDEX);
+    destination[..].fill(INVALID_INDEX);
 
     let mut next_vertex = 0;
 
