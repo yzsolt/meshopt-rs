@@ -1,7 +1,7 @@
 //! Index buffer generation and index/vertex buffer remapping
 
-use crate::{INVALID_INDEX, Stream};
 use crate::util::fill_slice;
+use crate::{Stream, INVALID_INDEX};
 
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
@@ -33,7 +33,7 @@ impl Hasher for VertexHasher {
 
         self.state = h;
     }
-    
+
     fn finish(&self) -> u64 {
         self.state as u64
     }
@@ -41,7 +41,12 @@ impl Hasher for VertexHasher {
 
 type BuildVertexHasher = BuildHasherDefault<VertexHasher>;
 
-fn generate_vertex_remap_inner<Vertex, Lookup>(destination: &mut [u32], indices: Option<&[u32]>, vertex_count: usize, lookup: Lookup) -> usize 
+fn generate_vertex_remap_inner<Vertex, Lookup>(
+    destination: &mut [u32],
+    indices: Option<&[u32]>,
+    vertex_count: usize,
+    lookup: Lookup,
+) -> usize
 where
     Lookup: Fn(usize) -> Vertex,
     Vertex: Eq + std::hash::Hash,
@@ -51,21 +56,21 @@ where
         None => vertex_count,
     };
     assert_eq!(index_count % 3, 0);
-    
+
     fill_slice(destination, INVALID_INDEX);
 
     let mut table = HashMap::with_capacity_and_hasher(vertex_count, BuildVertexHasher::default());
 
     let mut next_vertex = 0;
-    
-	for i in 0..index_count {
-		let index = match indices {
+
+    for i in 0..index_count {
+        let index = match indices {
             Some(buffer) => buffer[i] as usize,
             None => i,
         };
-		assert!(index < vertex_count);
+        assert!(index < vertex_count);
 
-		if destination[index] == INVALID_INDEX {
+        if destination[index] == INVALID_INDEX {
             match table.entry(lookup(index)) {
                 Entry::Occupied(entry) => {
                     let value = *entry.get() as usize;
@@ -78,12 +83,12 @@ where
                     next_vertex += 1;
                 }
             }
-		}
-	}
+        }
+    }
 
-	assert!(next_vertex <= vertex_count);
+    assert!(next_vertex <= vertex_count);
 
-	next_vertex
+    next_vertex
 }
 
 /// Generates a vertex remap table from the vertex buffer and an optional index buffer and returns number of unique vertices.
@@ -108,9 +113,10 @@ struct StreamVertex<'a> {
 
 impl<'a> PartialEq for StreamVertex<'a> {
     fn eq(&self, other: &Self) -> bool {
-        self.streams.iter().zip(other.streams).all(|(s1, s2)| {
-            s1.get(self.index) == s2.get(other.index)
-        })
+        self.streams
+            .iter()
+            .zip(other.streams)
+            .all(|(s1, s2)| s1.get(self.index) == s2.get(other.index))
     }
 }
 
@@ -153,9 +159,9 @@ pub fn generate_vertex_remap_multi(destination: &mut [u32], indices: Option<&[u3
 ///
 /// * `destination`: must contain enough space for the resulting vertex buffer (`unique_vertex_count` elements, returned by [generate_vertex_remap])
 /// * `vertices`: should have the initial vertex count and not the value returned by [generate_vertex_remap]
-pub fn remap_vertex_buffer<Vertex>(destination: &mut [Vertex], vertices: &[Vertex], remap: &[u32]) 
-where 
-    Vertex: Copy
+pub fn remap_vertex_buffer<Vertex>(destination: &mut [Vertex], vertices: &[Vertex], remap: &[u32])
+where
+    Vertex: Copy,
 {
     remap
         .iter()
@@ -168,28 +174,32 @@ where
 pub fn remap_index_buffer(indices: &mut [u32], remap: &[u32]) {
     assert_eq!(indices.len() % 3, 0);
 
-	for v in indices {
+    for v in indices {
         assert!(*v != INVALID_INDEX);
 
         *v = remap[*v as usize];
-	}
+    }
 }
 
-fn generate_shadow_index_buffer_inner<Vertex, Lookup>(destination: &mut [u32], indices: &[u32], vertex_count: usize, lookup: Lookup) 
-where
+fn generate_shadow_index_buffer_inner<Vertex, Lookup>(
+    destination: &mut [u32],
+    indices: &[u32],
+    vertex_count: usize,
+    lookup: Lookup,
+) where
     Lookup: Fn(usize) -> Vertex,
     Vertex: Eq + std::hash::Hash,
 {
     assert_eq!(indices.len() % 3, 0);
-    
+
     let mut remap: Vec<u32> = vec![INVALID_INDEX; vertex_count];
 
     let mut table = HashMap::with_capacity_and_hasher(vertex_count, BuildVertexHasher::default());
 
-	for (i, index) in indices.iter().enumerate() {
+    for (i, index) in indices.iter().enumerate() {
         let index = *index as usize;
 
-		if remap[index] == INVALID_INDEX {
+        if remap[index] == INVALID_INDEX {
             remap[index] = match table.entry(lookup(index)) {
                 Entry::Occupied(entry) => *entry.get(),
                 Entry::Vacant(entry) => {
@@ -198,9 +208,9 @@ where
                 }
             };
         }
-        
+
         destination[i] = remap[index];
-	}
+    }
 }
 
 /// Generates index buffer that can be used for more efficient rendering when only a subset of the vertex attributes is necessary.

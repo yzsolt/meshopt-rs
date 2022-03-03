@@ -8,12 +8,12 @@
 pub mod cluster;
 pub mod index;
 pub mod overdraw;
+pub mod quantize;
 #[cfg(feature = "experimental")]
 pub mod simplify;
 #[cfg(feature = "experimental")]
 pub mod spatial_order;
 pub mod stripify;
-pub mod quantize;
 pub mod util;
 pub mod vertex;
 
@@ -46,11 +46,7 @@ impl<'a> Stream<'a> {
 
         let data = util::as_bytes(slice);
 
-        Self::from_bytes(
-            data,
-            value_size,
-            0..value_size,
-        )
+        Self::from_bytes(data, value_size, 0..value_size)
     }
 
     /// Creates a stream from a slice with the given byte subset.
@@ -85,11 +81,7 @@ impl<'a> Stream<'a> {
 
         let data = util::as_bytes(slice);
 
-        Self::from_bytes(
-            data,
-            value_size,
-            subset,
-        )
+        Self::from_bytes(data, value_size, subset)
     }
 
     /// Creates a stream from raw bytes.
@@ -104,20 +96,16 @@ impl<'a> Stream<'a> {
         let value_size = std::mem::size_of::<T>();
 
         let stride = stride * value_size;
-        let subset = subset.start*value_size..subset.end*value_size;
+        let subset = subset.start * value_size..subset.end * value_size;
 
         let data = util::as_bytes(slice);
 
-        Self {
-            data,
-            stride,
-            subset,
-        }
+        Self { data, stride, subset }
     }
 
     fn get(&self, index: usize) -> &'a [u8] {
         let i = index * self.stride;
-        &self.data[i+self.subset.start..i+self.subset.end]
+        &self.data[i + self.subset.start..i + self.subset.end]
     }
 
     /// Returns length of the stream in value groups.
@@ -130,14 +118,12 @@ impl<'a> Stream<'a> {
 struct Vector3 {
     x: f32,
     y: f32,
-    z: f32
+    z: f32,
 }
 
 impl Vector3 {
     pub fn new(x: f32, y: f32, z: f32) -> Vector3 {
-        Self {
-            x, y, z
-        }
+        Self { x, y, z }
     }
 
     #[cfg(feature = "experimental")]
