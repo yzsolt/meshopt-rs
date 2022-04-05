@@ -471,15 +471,9 @@ mod test {
         let boundsd = compute_cluster_bounds(&ibd, &vbd);
         let bounds1 = compute_cluster_bounds(&ib1, &vbd);
 
-        assert!(
-            bounds0.center[0] == 0.0 && bounds0.center[1] == 0.0 && bounds0.center[2] == 0.0 && bounds0.radius == 0.0
-        );
-        assert!(
-            boundsd.center[0] == 0.0 && boundsd.center[1] == 0.0 && boundsd.center[2] == 0.0 && boundsd.radius == 0.0
-        );
-        assert!(
-            bounds1.center[0] == 0.0 && bounds1.center[1] == 0.0 && bounds1.center[2] == 0.0 && bounds1.radius == 0.0
-        );
+        assert!(bounds0.center == [0.0, 0.0, 0.0] && bounds0.radius == 0.0);
+        assert!(boundsd.center == [0.0, 0.0, 0.0] && boundsd.radius == 0.0);
+        assert!(bounds1.center == [0.0, 0.0, 0.0] && bounds1.radius == 0.0);
 
         let vb1 = vb_from_slice(&[1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]);
         let ib2 = [0, 1, 2, 0, 2, 1];
@@ -487,10 +481,10 @@ mod test {
         // these bounds have a degenerate cone since the cluster has two triangles with opposite normals
         let bounds2 = compute_cluster_bounds(&ib2, &vb1);
 
-        assert!(bounds2.cone_apex[0] == 0.0 && bounds2.cone_apex[1] == 0.0 && bounds2.cone_apex[2] == 0.0);
-        assert!(bounds2.cone_axis[0] == 0.0 && bounds2.cone_axis[1] == 0.0 && bounds2.cone_axis[2] == 0.0);
+        assert!(bounds2.cone_apex == [0.0, 0.0, 0.0]);
+        assert!(bounds2.cone_axis == [0.0, 0.0, 0.0]);
         assert!(bounds2.cone_cutoff == 1.0);
-        assert!(bounds2.cone_axis_s8[0] == 0 && bounds2.cone_axis_s8[1] == 0 && bounds2.cone_axis_s8[2] == 0);
+        assert!(bounds2.cone_axis_s8 == [0, 0, 0]);
         assert!(bounds2.cone_cutoff_s8 == 127);
 
         // however, the bounding sphere needs to be in tact (here we only check bbox for simplicity)
