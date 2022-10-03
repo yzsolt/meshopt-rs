@@ -4,13 +4,15 @@
 [![Docs.rs](https://docs.rs/meshopt-rs/badge.svg)](https://docs.rs/meshopt-rs)
 [![Build Status](https://github.com/yzsolt/meshopt-rs/workflows/continuous-integration/badge.svg)](https://github.com/yzsolt/meshopt-rs/actions)
 
-**Work in progress** pure Rust implementation of the awesome [meshoptimizer](https://github.com/zeux/meshoptimizer) library. Will be published on `crates.io` once all v0.15 features are ported.
+Pure Rust implementation of the awesome [meshoptimizer](https://github.com/zeux/meshoptimizer) library.
 
-If you want to use the original C++ implementation from Rust, check out the [meshopt crate](https://crates.io/crates/meshopt).
+If you want to use the original C++ implementation from Rust, check out the [meshopt](https://crates.io/crates/meshopt) crate.
 
 ## Features
 
-`meshoptimizer` v0.15 feature level is the current support target.
+`meshoptimizer` v0.15 feature level is the current support target. Planned but currently missing features:
+- [SIMD support](https://github.com/yzsolt/meshopt-rs/issues/1)
+- [WASM support](https://github.com/yzsolt/meshopt-rs/issues/2)
 
 Experimental features (hidden behind `MESHOPTIMIZER_EXPERIMENTAL` in the original implementation) can be enabled with the `experimental` Cargo feature:
 
