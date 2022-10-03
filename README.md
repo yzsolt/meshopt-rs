@@ -1,5 +1,9 @@
 # meshopt-rs
 
+[![Crates.io](https://img.shields.io/crates/v/meshopt-rs.svg?label=meshopt-rs)](https://crates.io/crates/meshopt-rs)
+[![Docs.rs](https://docs.rs/meshopt-rs/badge.svg)](https://docs.rs/meshopt-rs)
+[![Build Status](https://github.com/yzsolt/meshopt-rs/workflows/continuous-integration/badge.svg)](https://github.com/yzsolt/meshopt-rs/actions)
+
 **Work in progress** pure Rust implementation of the awesome [meshoptimizer](https://github.com/zeux/meshoptimizer) library. Will be published on `crates.io` once all v0.15 features are ported.
 
 If you want to use the original C++ implementation from Rust, check out the [meshopt crate](https://crates.io/crates/meshopt).
