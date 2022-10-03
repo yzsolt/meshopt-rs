@@ -9,5 +9,5 @@ edition = "2021"
 experimental = []
 
 [dev-dependencies]
-miniz_oxide = "0.5.1"
-tobj = "3.2.0"
+miniz_oxide = "0.6.2"
+tobj = "3.2.3"
