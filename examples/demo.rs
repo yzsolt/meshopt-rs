@@ -84,19 +84,21 @@ impl Mesh {
             vertices.reserve(mesh.indices.len());
             indices.extend_from_slice(&mesh.indices);
 
-            //for i in 0..mesh.positions.len()/3 {
-            for i in &mesh.indices {
-                let i = *i as usize;
+            for i in 0..mesh.indices.len() {
                 let mut vertex = Vertex::default();
 
-                vertex.p.copy_from_slice(&mesh.positions[3 * i..3 * (i + 1)]);
+                let pi = mesh.indices[i] as usize;
+                let ni = mesh.normal_indices[i] as usize;
+                let ti = mesh.texcoord_indices[i] as usize;
+
+                vertex.p.copy_from_slice(&mesh.positions[3 * pi..3 * (pi + 1)]);
 
                 if !mesh.normals.is_empty() {
-                    vertex.n.copy_from_slice(&mesh.normals[3 * i..3 * (i + 1)]);
+                    vertex.n.copy_from_slice(&mesh.normals[3 * ni..3 * (ni + 1)]);
                 }
 
                 if !mesh.texcoords.is_empty() {
-                    vertex.t.copy_from_slice(&mesh.texcoords[2 * i..2 * (i + 1)]);
+                    vertex.t.copy_from_slice(&mesh.texcoords[2 * ti..2 * (ti + 1)]);
                 }
 
                 vertices.push(vertex);
@@ -1070,17 +1072,18 @@ where
         let mesh = &model.mesh;
         assert!(mesh.positions.len() % 3 == 0);
 
-        for i in &mesh.indices {
-            let src = *i as usize;
-
-            unindexed_pos[dst].copy_from_slice(&mesh.positions[3 * src..3 * (src + 1)]);
+        for i in 0..mesh.indices.len() {
+            let pi = mesh.indices[i] as usize;
+            unindexed_pos[dst].copy_from_slice(&mesh.positions[3 * pi..3 * (pi + 1)]);
 
             if !mesh.normals.is_empty() {
-                unindexed_nrm[dst].copy_from_slice(&mesh.normals[3 * src..3 * (src + 1)]);
+                let ni = mesh.normal_indices[i] as usize;
+                unindexed_nrm[dst].copy_from_slice(&mesh.normals[3 * ni..3 * (ni + 1)]);
             }
 
             if !mesh.texcoords.is_empty() {
-                unindexed_uv[dst].copy_from_slice(&mesh.texcoords[2 * src..2 * (src + 1)]);
+                let ti = mesh.texcoord_indices[i] as usize;
+                unindexed_uv[dst].copy_from_slice(&mesh.texcoords[2 * ti..2 * (ti + 1)]);
             }
 
             dst += 1;

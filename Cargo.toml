@@ -3,11 +3,16 @@ name = "meshopt-rs"
 version = "0.1.0"
 authors = ["yzsolt"]
 edition = "2021"
+license = "MIT"
+description = "Pure Rust implementation of the meshoptimizer library"
+repository = "https://github.com/yzsolt/meshopt-rs"
+categories = ["algorithms", "encoding", "game-development", "graphics", "rendering::data-formats"]
+keywords = ["gamedev", "graphics", "meshing", "meshopt"]
 
 [features]
 # Experimental APIs have unstable interface and might have implementation that's not fully tested or optimized
 experimental = []
 
 [dev-dependencies]
-miniz_oxide = "0.5.1"
-tobj = "3.2.0"
+miniz_oxide = "0.6.2"
+tobj = "3.2.3"
