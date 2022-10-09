@@ -34,6 +34,13 @@ pub trait Position {
     fn pos(&self) -> [f32; 3];
 }
 
+impl Position for [f32; 3] {
+    #[inline]
+    fn pos(&self) -> [f32; 3] {
+        *self
+    }
+}
+
 pub(crate) fn calc_pos_extents<Vertex>(vertices: &[Vertex]) -> ([f32; 3], f32)
 where
     Vertex: Position,
