@@ -366,6 +366,7 @@ pub fn encode_vertex_buffer<Vertex>(
 
     let vertex_data = as_bytes(vertices);
 
+    let buffer_size = buffer.len();
     let mut data = buffer;
 
     if data.len() < 1 + vertex_size {
@@ -425,7 +426,8 @@ pub fn encode_vertex_buffer<Vertex>(
 
     written_sum += write_exact(&mut data, &first_vertex[0..vertex_size])?;
 
-    //assert!(data >= buffer + tail_size);
+    assert!(written_sum >= tail_size);
+    assert!(written_sum <= buffer_size);
 
     Some(written_sum)
 }
