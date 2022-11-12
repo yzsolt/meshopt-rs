@@ -36,20 +36,22 @@ fn murmur3(mut h: u32) -> u32 {
     h
 }
 
-fn bench_codecs(vertices: &[Vertex], indices: &[u32], bestvd: &mut f64, bestid: &mut f64) {
+fn bench_codecs(vertices: &[Vertex], indices: &[u32], bestvd: &mut f64, bestid: &mut f64, verbose: bool) {
     let mut vb = vec![Vertex::default(); vertices.len()];
     let mut ib = vec![0u32; indices.len()];
 
     let mut vc = vec![0u8; encode_vertex_buffer_bound(vertices.len(), std::mem::size_of::<Vertex>())];
     let mut ic = vec![0u8; encode_index_buffer_bound(indices.len(), vertices.len())];
 
-    println!(
-        "source: vertex data {} bytes, index data {} bytes",
-        vertices.len() * std::mem::size_of::<Vertex>(),
-        indices.len() * 4
-    );
+    if verbose {
+        println!(
+            "source: vertex data {} bytes, index data {} bytes",
+            vertices.len() * std::mem::size_of::<Vertex>(),
+            indices.len() * 4
+        );
+    }
 
-    for pass in 0..2 {
+    for pass in 0..if verbose { 2 } else { 1 } {
         if pass == 1 {
             optimize_vertex_cache_strip(&mut ib, &indices, vertices.len());
         } else {
@@ -66,12 +68,14 @@ fn bench_codecs(vertices: &[Vertex], indices: &[u32], bestvd: &mut f64, bestid: 
         let ic_size = encode_index_buffer(&mut ic, &ib, IndexEncodingVersion::V1).unwrap();
         ic.resize_with(ic_size, Default::default);
 
-        println!(
-            "pass {}: vertex data {} bytes, index data {} bytes",
-            pass,
-            vc.len(),
-            ic.len()
-        );
+        if verbose {
+            println!(
+                "pass {}: vertex data {} bytes, index data {} bytes",
+                pass,
+                vc.len(),
+                ic.len()
+            );
+        }
 
         for _ in 0..10 {
             let t0 = Instant::now();
@@ -94,13 +98,15 @@ fn bench_codecs(vertices: &[Vertex], indices: &[u32], bestvd: &mut f64, bestid: 
             let vertex_throughput = (vertices.len() * std::mem::size_of::<Vertex>()) as f64 / GB / vertex_time;
             let index_throughput = (indices.len() * 4) as f64 / GB / index_time;
 
-            println!(
-                "decode: vertex {:.2} ms ({:.2} GB/sec), index {:.2} ms ({:.2} GB/sec)",
-                vertex_time * 1_000.0,
-                vertex_throughput,
-                index_time * 1_000.0,
-                index_throughput
-            );
+            if verbose {
+                println!(
+                    "decode: vertex {:.2} ms ({:.2} GB/sec), index {:.2} ms ({:.2} GB/sec)",
+                    vertex_time * 1_000.0,
+                    vertex_throughput,
+                    index_time * 1_000.0,
+                    index_throughput
+                );
+            }
 
             if pass == 0 {
                 *bestvd = bestvd.max(vertex_throughput);
@@ -110,7 +116,14 @@ fn bench_codecs(vertices: &[Vertex], indices: &[u32], bestvd: &mut f64, bestid: 
     }
 }
 
-fn bench_filters(count: usize, besto8: &mut f64, besto12: &mut f64, bestq12: &mut f64, bestexp: &mut f64) {
+fn bench_filters(
+    count: usize,
+    besto8: &mut f64,
+    besto12: &mut f64,
+    bestq12: &mut f64,
+    bestexp: &mut f64,
+    verbose: bool,
+) {
     // note: the filters are branchless so we just run them on runs of zeroes
     let count4 = (count + 3) & !3;
     let mut d4 = vec![[0u8; 4]; count4];
@@ -120,10 +133,12 @@ fn bench_filters(count: usize, besto8: &mut f64, besto12: &mut f64, bestq12: &mu
     let d4_size = d4.len() * std::mem::size_of::<[u8; 4]>();
     let d8_size = d4.len() * std::mem::size_of::<[u16; 4]>();
 
-    println!(
-        "filters: oct8 data {} bytes, oct12/quat12 data {} bytes",
-        d4_size, d8_size
-    );
+    if verbose {
+        println!(
+            "filters: oct8 data {} bytes, oct12/quat12 data {} bytes",
+            d4_size, d8_size
+        );
+    }
 
     for _ in 0..10 {
         let t0 = Instant::now();
@@ -156,17 +171,19 @@ fn bench_filters(count: usize, besto8: &mut f64, besto12: &mut f64, bestq12: &mu
         let quat_throughput = d8_size as f64 / GB / quat_time;
         let exp_throughput = d8_size as f64 / GB / exp_time;
 
-        println!(
-            "filter: oct8 {:.2} ms ({:.2} GB/sec), oct12 {:.2} ms ({:.2} GB/sec), quat12 {:.2} ms ({:.2} GB/sec), exp {:.2} ms ({:.2} GB/sec)",
-            oct_8_time,
-            oct_8_throughput,
-            oct_16_time,
-            oct_16_throughput,
-            quat_time,
-            quat_throughput,
-            exp_time,
-            exp_throughput
-        );
+        if verbose {
+            println!(
+                "filter: oct8 {:.2} ms ({:.2} GB/sec), oct12 {:.2} ms ({:.2} GB/sec), quat12 {:.2} ms ({:.2} GB/sec), exp {:.2} ms ({:.2} GB/sec)",
+                oct_8_time,
+                oct_8_throughput,
+                oct_16_time,
+                oct_16_throughput,
+                quat_time,
+                quat_throughput,
+                exp_time,
+                exp_throughput
+            );
+        }
 
         *besto8 = besto8.max(oct_8_throughput);
         *besto12 = besto12.max(oct_16_throughput);
@@ -179,6 +196,8 @@ fn main() {
     const N: u32 = 1000;
 
     let mut vertices = Vec::with_capacity(((N + 1) * (N + 1)) as usize);
+
+    let verbose = std::env::args().find(|a| a == "-v").is_some();
 
     for x in 0..=N {
         for y in 0..=N {
@@ -212,7 +231,7 @@ fn main() {
 
     let mut bestvd = 0.0;
     let mut bestid = 0.0;
-    bench_codecs(&vertices, &indices, &mut bestvd, &mut bestid);
+    bench_codecs(&vertices, &indices, &mut bestvd, &mut bestid, verbose);
 
     let mut besto8 = 0.0;
     let mut besto12 = 0.0;
@@ -224,11 +243,12 @@ fn main() {
         &mut besto12,
         &mut bestq12,
         &mut bestexp,
+        verbose,
     );
 
-    println!("Algorithm   : vtxdec\tidxdec\toct8\toct12\tquat12\texp");
+    println!("Algorithm   :\tvtx\tidx\toct8\toct12\tquat12\texp");
     println!(
-        "Score (GB/s): {:.2}\t{:.2}\t{:.2}\t{:.2}\t{:.2}\t{:.2}",
+        "Score (GB/s):\t{:.2}\t{:.2}\t{:.2}\t{:.2}\t{:.2}\t{:.2}",
         bestvd, bestid, besto8, besto12, bestq12, bestexp
     );
 }
