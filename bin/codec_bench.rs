@@ -96,7 +96,10 @@ fn bench_codecs(vertices: &[Vertex], indices: &[u32], bestvd: &mut f64, bestid: 
 
             println!(
                 "decode: vertex {:.2} ms ({:.2} GB/sec), index {:.2} ms ({:.2} GB/sec)",
-                vertex_time, vertex_throughput, index_time, index_throughput
+                vertex_time * 1_000.0,
+                vertex_throughput,
+                index_time * 1_000.0,
+                index_throughput
             );
 
             if pass == 0 {
