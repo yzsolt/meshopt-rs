@@ -37,8 +37,8 @@ fn murmur3(mut h: u32) -> u32 {
 }
 
 fn bench_codecs(vertices: &[Vertex], indices: &[u32], bestvd: &mut f64, bestid: &mut f64) {
-    let mut vb = Vec::from(vertices);
-    let mut ib = Vec::from(indices);
+    let mut vb = vec![Vertex::default(); vertices.len()];
+    let mut ib = vec![0u32; indices.len()];
 
     let mut vc = vec![0u8; encode_vertex_buffer_bound(vertices.len(), std::mem::size_of::<Vertex>())];
     let mut ic = vec![0u8; encode_index_buffer_bound(indices.len(), vertices.len())];
@@ -58,9 +58,11 @@ fn bench_codecs(vertices: &[Vertex], indices: &[u32], bestvd: &mut f64, bestid: 
 
         optimize_vertex_fetch(&mut vb, &mut ib, &vertices);
 
+        vc.resize_with(vc.capacity(), Default::default);
         let vc_size = encode_vertex_buffer(&mut vc, &vb, VertexEncodingVersion::V0).unwrap();
         vc.resize_with(vc_size, Default::default);
 
+        ic.resize_with(ic.capacity(), Default::default);
         let ic_size = encode_index_buffer(&mut ic, &ib, IndexEncodingVersion::V1).unwrap();
         ic.resize_with(ic_size, Default::default);
 
