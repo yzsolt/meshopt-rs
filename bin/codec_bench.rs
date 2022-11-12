@@ -8,8 +8,6 @@ use meshopt_rs::vertex::Position;
 use meshopt_rs::vertex::VertexEncodingVersion;
 use std::time::Instant;
 
-// TODO: figure out whether we should use `Vertex` or `Vertex2`
-
 #[derive(Clone, Copy, Default)]
 #[repr(C)]
 struct Vertex {
@@ -25,18 +23,6 @@ impl Position for Vertex {
         };
 
         [get_f32(0), get_f32(2), get_f32(4)]
-    }
-}
-
-#[derive(Clone, Copy, Default)]
-#[repr(C)]
-struct Vertex2 {
-    data: [f32; 8],
-}
-
-impl Position for Vertex2 {
-    fn pos(&self) -> [f32; 3] {
-        [self.data[0], self.data[1], self.data[2]]
     }
 }
 
@@ -194,16 +180,6 @@ fn main() {
                 // note: this doesn't stress the sentinel logic too much but it's all branchless so it's probably fine?
                 v.data[k as usize] = (h & ((1 << k) - 1)) as u16;
             }
-
-            /* For Vertex2:
-            for k in 0..8 {
-                let h = murmur3((x * (N + 1) + y) * 16 + k);
-
-                // use random k-bit sequence for each word to test all encoding types
-                // note: this doesn't stress the sentinel logic too much but it's all branchless so it's probably fine?
-                v.data[k as usize] = f32::from_bits((h & ((1 << k) - 1)) as u32);
-            }
-            */
 
             vertices.push(v);
         }
