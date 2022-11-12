@@ -8,8 +8,6 @@ use meshopt_rs::vertex::Position;
 use meshopt_rs::vertex::VertexEncodingVersion;
 use std::time::Instant;
 
-// TODO: figure out whether we should use `Vertex` or `Vertex2`
-
 #[derive(Clone, Copy, Default)]
 #[repr(C)]
 struct Vertex {
@@ -28,18 +26,6 @@ impl Position for Vertex {
     }
 }
 
-#[derive(Clone, Copy, Default)]
-#[repr(C)]
-struct Vertex2 {
-    data: [f32; 8],
-}
-
-impl Position for Vertex2 {
-    fn pos(&self) -> [f32; 3] {
-        [self.data[0], self.data[1], self.data[2]]
-    }
-}
-
 fn murmur3(mut h: u32) -> u32 {
     h ^= h >> 16;
     h = h.wrapping_mul(0x85ebca6b);
@@ -51,8 +37,8 @@ fn murmur3(mut h: u32) -> u32 {
 }
 
 fn bench_codecs(vertices: &[Vertex], indices: &[u32], bestvd: &mut f64, bestid: &mut f64) {
-    let mut vb = Vec::from(vertices);
-    let mut ib = Vec::from(indices);
+    let mut vb = vec![Vertex::default(); vertices.len()];
+    let mut ib = vec![0u32; indices.len()];
 
     let mut vc = vec![0u8; encode_vertex_buffer_bound(vertices.len(), std::mem::size_of::<Vertex>())];
     let mut ic = vec![0u8; encode_index_buffer_bound(indices.len(), vertices.len())];
@@ -72,9 +58,11 @@ fn bench_codecs(vertices: &[Vertex], indices: &[u32], bestvd: &mut f64, bestid: 
 
         optimize_vertex_fetch(&mut vb, &mut ib, &vertices);
 
+        vc.resize_with(vc.capacity(), Default::default);
         let vc_size = encode_vertex_buffer(&mut vc, &vb, VertexEncodingVersion::V0).unwrap();
         vc.resize_with(vc_size, Default::default);
 
+        ic.resize_with(ic.capacity(), Default::default);
         let ic_size = encode_index_buffer(&mut ic, &ib, IndexEncodingVersion::V1).unwrap();
         ic.resize_with(ic_size, Default::default);
 
@@ -108,7 +96,10 @@ fn bench_codecs(vertices: &[Vertex], indices: &[u32], bestvd: &mut f64, bestid: 
 
             println!(
                 "decode: vertex {:.2} ms ({:.2} GB/sec), index {:.2} ms ({:.2} GB/sec)",
-                vertex_time, vertex_throughput, index_time, index_throughput
+                vertex_time * 1_000.0,
+                vertex_throughput,
+                index_time * 1_000.0,
+                index_throughput
             );
 
             if pass == 0 {
@@ -194,16 +185,6 @@ fn main() {
                 // note: this doesn't stress the sentinel logic too much but it's all branchless so it's probably fine?
                 v.data[k as usize] = (h & ((1 << k) - 1)) as u16;
             }
-
-            /* For Vertex2:
-            for k in 0..8 {
-                let h = murmur3((x * (N + 1) + y) * 16 + k);
-
-                // use random k-bit sequence for each word to test all encoding types
-                // note: this doesn't stress the sentinel logic too much but it's all branchless so it's probably fine?
-                v.data[k as usize] = f32::from_bits((h & ((1 << k) - 1)) as u32);
-            }
-            */
 
             vertices.push(v);
         }
