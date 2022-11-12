@@ -208,7 +208,7 @@ fn main() {
 
                 // use random k-bit sequence for each word to test all encoding types
                 // note: this doesn't stress the sentinel logic too much but it's all branchless so it's probably fine?
-                v.data[k as usize] = (h & ((1 << k) - 1)) as u16;
+                v.data[k as usize] = (h & ((1 << (k + 1)) - 1)) as u16;
             }
 
             vertices.push(v);
