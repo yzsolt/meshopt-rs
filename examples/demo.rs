@@ -1210,12 +1210,27 @@ fn process(mesh: &Mesh) {
     }
 }
 
+fn process_dev(mesh: &Mesh) {
+    simplify_mesh(mesh);
+    simplify_mesh_sloppy(mesh, 0.2);
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    for argument in env::args().skip(1) {
-        println!("{}", argument);
-        let mesh = Mesh::load(argument.clone())?;
-        process(&mesh);
-        process_deinterleaved(argument)?;
+    let args: Vec<String> = env::args().skip(1).collect();
+    let dev_mode = match args.first() {
+        Some(arg) => arg == "-d",
+        None => false,
+    };
+
+    for arg in args.iter().skip(if dev_mode { 1 } else { 0 }) {
+        let mesh = Mesh::load(arg.clone())?;
+
+        if dev_mode {
+            process_dev(&mesh);
+        } else {
+            process(&mesh);
+            process_deinterleaved(arg)?;
+        }
     }
 
     Ok(())
