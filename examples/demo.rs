@@ -610,9 +610,18 @@ fn simplify_mesh_sloppy(mesh: &Mesh, threshold: f32) {
     let start = Instant::now();
 
     let target_index_count = (mesh.indices.len() as f32 * threshold) as usize;
+    let target_error = 1e-1;
+    let mut result_error = 0.0;
 
-    lod.indices.resize(target_index_count, Default::default()); // note: `simplify_loppy`, unlike `simplify`, is guaranteed to output results that don't exceed the requested `target_index_count`
-    let size = simplify_sloppy(&mut lod.indices, &mesh.indices, &mesh.vertices, target_index_count);
+    lod.indices.resize(target_index_count, Default::default()); // note: simplify needs space for `index_count` elements in the destination array, not `target_index_count`
+    let size = simplify_sloppy(
+        &mut lod.indices,
+        &mesh.indices,
+        &mesh.vertices,
+        target_index_count,
+        target_error,
+        Some(&mut result_error),
+    );
     lod.indices.resize(size, Default::default());
 
     lod.vertices.resize(
@@ -629,10 +638,11 @@ fn simplify_mesh_sloppy(mesh: &Mesh, threshold: f32) {
     let duration = start.elapsed();
 
     println!(
-        "{:9}: {} triangles => {} triangles in {:.2} msec",
+        "{:9}: {} triangles => {} triangles ({:.2}% deviation) in {:.2} msec",
         "SimplifyS",
         mesh.indices.len() / 3,
         lod.indices.len() / 3,
+        result_error * 100.0,
         duration.as_micros() as f64 / 1000.0
     );
 }

@@ -1251,7 +1251,7 @@ fn interpolate(y: f32, x0: f32, y0: f32, x1: f32, y1: f32, x2: f32, y2: f32) -> 
 ///
 /// # Arguments
 ///
-/// * `destination`: must contain enough space for the **source** index buffer (since optimization is iterative, this means `indices.len()` elements - **not** `target_index_count`!)
+/// * `destination`: must contain enough space for the target index buffer, worst case is `indices.len()` elements (**not** `target_index_count`)!
 /// * `target_error`: represents the error relative to mesh extents that can be tolerated, e.g. 0.01 = 1% deformation
 /// * `result_error`: can be None; when it's not None, it will contain the resulting (relative) error after simplification
 pub fn simplify<Vertex>(
@@ -1445,7 +1445,7 @@ where
 
 /// Reduces the number of triangles in the mesh, sacrificing mesh apperance for simplification performance.
 ///
-/// The algorithm doesn't preserve mesh topology but is always able to reach target triangle count.
+/// The algorithm doesn't preserve mesh topology but can stop short of the target goal based on target error.
 ///
 /// Returns the number of indices after simplification, with destination containing new index data
 /// The resulting index buffer references vertices from the original vertex buffer.
@@ -1453,12 +1453,16 @@ where
 ///
 /// # Arguments
 ///
-/// * `destination`: must contain enough space for the target index buffer
+/// * `destination`: must contain enough space for the target index buffer, worst case is `indices.len()` elements (**not** `target_index_count`)!
+/// * `target_error`: represents the error relative to mesh extents that can be tolerated, e.g. 0.01 = 1% deformation
+/// * `result_error`: can be None; when it's not None, it will contain the resulting (relative) error after simplification
 pub fn simplify_sloppy<Vertex>(
     destination: &mut [u32],
     indices: &[u32],
     vertices: &[Vertex],
     target_index_count: usize,
+    target_error: f32,
+    result_error: Option<&mut f32>,
 ) -> usize
 where
     Vertex: Position,
@@ -1468,10 +1472,6 @@ where
 
     // we expect to get ~2 triangles/vertex in the output
     let target_cell_count = target_index_count / 6;
-
-    if target_cell_count == 0 {
-        return 0;
-    }
 
     let mut vertex_positions = vec![Vector3::default(); vertices.len()];
     rescale_positions(&mut vertex_positions, vertices);
@@ -1491,17 +1491,24 @@ where
     const INTERPOLATION_PASSES: i32 = 5;
 
     // invariant: # of triangles in min_grid <= target_count
-    let mut min_grid: i32 = 0;
+    let mut min_grid = (1.0 / target_error.max(1e-3)) as i32;
     let mut max_grid: i32 = 1025;
     let mut min_triangles = 0;
     let mut max_triangles = indices.len() / 3;
+
+    // when we're error-limited, we compute the triangle count for the min. size; this accelerates convergence and provides the correct answer when we can't use a larger grid
+    if min_grid > 1 {
+        compute_vertex_ids(&mut vertex_ids, &vertex_positions, min_grid);
+        min_triangles = count_triangles(&vertex_ids, indices);
+    }
 
     // instead of starting in the middle, let's guess as to what the answer might be! triangle count usually grows as a square of grid size...
     let mut next_grid_size = ((target_cell_count as f32).sqrt() + 0.5) as i32;
 
     for pass in 0..10 + INTERPOLATION_PASSES {
-        assert!(min_triangles < target_index_count / 3);
-        assert!(max_grid - min_grid > 1);
+        if min_triangles >= target_index_count / 3 || max_grid - min_grid <= 1 {
+            break;
+        }
 
         // we clamp the prediction of the grid size to make sure that the search converges
         let mut grid_size = next_grid_size;
@@ -1547,10 +1554,6 @@ where
             max_triangles = triangles;
         }
 
-        if triangles == target_index_count / 3 || max_grid - min_grid <= 1 {
-            break;
-        }
-
         // we start by using interpolation search - it usually converges faster
         // however, interpolation search has a worst case of O(N) so we switch to binary search after a few iterations which converges in O(logN)
         next_grid_size = if pass < INTERPOLATION_PASSES {
@@ -1561,6 +1564,10 @@ where
     }
 
     if min_triangles == 0 {
+        if let Some(result_error) = result_error {
+            *result_error = 1.0;
+        }
+
         return 0;
     }
 
@@ -1602,6 +1609,10 @@ where
         write / 3
     );
 
+    if let Some(result_error) = result_error {
+        *result_error = cell_errors.into_iter().reduce(f32::max).unwrap().sqrt();
+    }
+
     write
 }
 
@@ -1613,7 +1624,7 @@ where
 ///
 /// # Arguments
 ///
-/// * `destination`: must contain enough space for the target index buffer
+/// * `destination`: must contain enough space for the target index buffer (`target_vertex_count` elements)
 pub fn simplify_points<Vertex>(destination: &mut [u32], vertices: &[Vertex], target_vertex_count: usize) -> usize
 where
     Vertex: Position,
@@ -1833,10 +1844,10 @@ mod test {
         let ib = [0, 1, 2, 0, 1, 2];
 
         // simplifying down to 0 triangles results in 0 immediately
-        assert_eq!(simplify_sloppy(&mut dst, &ib[0..3], &vb, 0), 0);
+        assert_eq!(simplify_sloppy(&mut dst, &ib[0..3], &vb, 0, 0.0, None), 0);
 
         // simplifying down to 2 triangles given that all triangles are degenerate results in 0 as well
-        assert_eq!(simplify_sloppy(&mut dst, &ib, &vb, 6), 0);
+        assert_eq!(simplify_sloppy(&mut dst, &ib, &vb, 6, 0.0, None), 0);
     }
 
     #[test]
