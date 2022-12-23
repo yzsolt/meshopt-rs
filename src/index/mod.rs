@@ -69,7 +69,7 @@ fn decode_v_byte<R: Read>(data: &mut R) -> u32 {
     // slow path: up to 4 extra bytes
     // note that this loop always terminates, which is important for malformed data
     let mut result = lead & 127;
-    let mut shift = 7;
+    let mut shift: u32 = 7;
 
     for _ in 0..4 {
         let group = read_byte(data) as u32;
