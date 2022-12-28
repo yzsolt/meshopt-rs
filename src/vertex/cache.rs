@@ -1,6 +1,9 @@
 //! Vertex transform cache analysis and optimization
 
-use crate::INVALID_INDEX;
+use crate::{
+    vertex::{build_triangle_adjacency, TriangleAdjacency},
+    INVALID_INDEX,
+};
 
 #[derive(Default)]
 pub struct VertexCacheStatistics {
@@ -117,58 +120,6 @@ const VERTEX_SCORE_TABLE_STRIP: VertexScoreTable = VertexScoreTable {
     ],
     live: [0.0, 0.956, 0.786, 0.577, 0.558, 0.618, 0.549, 0.499, 0.489],
 };
-
-#[derive(Default)]
-struct TriangleAdjacency {
-    counts: Vec<u32>,
-    offsets: Vec<u32>,
-    data: Vec<u32>,
-}
-
-fn build_triangle_adjacency(adjacency: &mut TriangleAdjacency, indices: &[u32], vertex_count: usize) {
-    let face_count = indices.len() / 3;
-
-    // allocate arrays
-    adjacency.counts = vec![0; vertex_count];
-    adjacency.offsets = vec![0; vertex_count];
-    adjacency.data = vec![0; indices.len()];
-
-    // fill triangle counts
-    for index in indices {
-        let index = *index as usize;
-
-        assert!(index < vertex_count);
-
-        adjacency.counts[index] += 1;
-    }
-
-    // fill offset table
-    let mut offset = 0;
-
-    for i in 0..vertex_count {
-        adjacency.offsets[i] = offset;
-        offset += adjacency.counts[i];
-    }
-
-    assert!(offset as usize == indices.len());
-
-    // fill triangle data
-    for i in 0..face_count {
-        for j in 0..3 {
-            let a = indices[i * 3 + j] as usize;
-            let o = &mut adjacency.offsets[a];
-            adjacency.data[*o as usize] = i as u32;
-            *o += 1;
-        }
-    }
-
-    // fix offsets that have been disturbed by the previous pass
-    for i in 0..vertex_count {
-        assert!(adjacency.offsets[i] >= adjacency.counts[i]);
-
-        adjacency.offsets[i] -= adjacency.counts[i];
-    }
-}
 
 fn get_next_vertex_dead_end(
     dead_end: &[u32],

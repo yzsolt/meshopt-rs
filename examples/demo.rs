@@ -891,20 +891,34 @@ fn shadow(mesh: &Mesh) {
 }
 
 #[cfg(feature = "experimental")]
-fn meshlets(mesh: &Mesh) {
+fn meshlets(mesh: &Mesh, scan: bool) {
     const MAX_VERTICES: usize = 64;
     const MAX_TRIANGLES: usize = 126;
+    const CONE_WEIGHT: f32 = 0.5; // note: should be set to 0 unless cone culling is used at runtime!
 
     // note: input mesh is assumed to be optimized for vertex cache and vertex fetch
     let start = Instant::now();
     let mut meshlets = vec![Meshlet::default(); build_meshlets_bound(mesh.indices.len(), MAX_VERTICES, MAX_TRIANGLES)];
-    let size = build_meshlets(
-        &mut meshlets,
-        &mesh.indices,
-        mesh.vertices.len(),
-        MAX_VERTICES,
-        MAX_TRIANGLES,
-    );
+
+    let size = if scan {
+        build_meshlets_scan(
+            &mut meshlets,
+            &mesh.indices,
+            mesh.vertices.len(),
+            MAX_VERTICES,
+            MAX_TRIANGLES,
+        )
+    } else {
+        build_meshlets(
+            &mut meshlets,
+            &mesh.indices,
+            &mesh.vertices,
+            MAX_VERTICES,
+            MAX_TRIANGLES,
+            CONE_WEIGHT,
+        )
+    };
+
     meshlets.resize(size, Meshlet::default());
     let duration = start.elapsed();
 
@@ -919,7 +933,8 @@ fn meshlets(mesh: &Mesh) {
     }
 
     println!(
-        "Meshlets : {} meshlets (avg vertices {:.1}, avg triangles {:.1}, not full {}) in {:.2} msec",
+        "Meshlets{}: {} meshlets (avg vertices {:.1}, avg triangles {:.1}, not full {}) in {:.2} msec",
+        if scan { 'S' } else { ' ' },
         meshlets.len(),
         vertices as f64 / meshlets.len() as f64,
         triangles as f64 / meshlets.len() as f64,
@@ -936,9 +951,13 @@ fn meshlets(mesh: &Mesh) {
     let mut accepted = 0;
     let mut accepted_s8 = 0;
 
+    let mut radii = vec![0f32; meshlets.len()];
+
     let start = Instant::now();
-    for meshlet in &meshlets {
+    for (i, meshlet) in meshlets.iter().enumerate() {
         let bounds = compute_meshlet_bounds(&meshlet, &mesh.vertices);
+
+        radii[i] = bounds.radius;
 
         // trivial accept: we can't ever backface cull this meshlet
         accepted += (bounds.cone_cutoff >= 1.0) as usize;
@@ -978,6 +997,19 @@ fn meshlets(mesh: &Mesh) {
             as usize;
     }
     let duration = start.elapsed();
+
+    let radius_mean: f32 = radii.iter().sum::<f32>() / radii.len() as f32;
+    let radius_variance: f32 =
+        radii.iter().map(|r| (r - radius_mean) * (r - radius_mean)).sum::<f32>() / (radii.len() - 1) as f32;
+    let radius_stddev = radius_variance.sqrt();
+    let meshlets_std: usize = radii.iter().map(|r| (*r < radius_mean + radius_stddev) as usize).sum();
+
+    println!(
+        "BoundDist: mean {} stddev {}; {:.1}% meshlets are under mean+stddev",
+        radius_mean,
+        radius_stddev,
+        meshlets_std as f64 / meshlets.len() as f64 * 100.0
+    );
 
     println!(
         "ConeCull : rejected apex {} ({:.1}%) / center {} ({:.1}%), trivially accepted {} ({:.1}%) in {:.2} msec",
@@ -1201,7 +1233,8 @@ fn process(mesh: &Mesh) {
     stripify_mesh(&copystrip, true, 'S');
 
     #[cfg(feature = "experimental")]
-    meshlets(&copy);
+    meshlets(&copy, false);
+    meshlets(&copy, true);
     shadow(&copy);
 
     encode_index(&copy, ' ');
@@ -1231,8 +1264,11 @@ fn process(mesh: &Mesh) {
 }
 
 fn process_dev(mesh: &Mesh) {
-    simplify_mesh(mesh);
-    simplify_mesh_sloppy(mesh, 0.2);
+    let mut copy = mesh.clone();
+    optimize_vertex_cache(&mut copy.indices, &mesh.indices, mesh.vertices.len());
+
+    meshlets(&copy, false);
+    meshlets(&copy, true);
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
