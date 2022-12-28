@@ -349,7 +349,8 @@ where
 
     let mut mean = [0f32; 3];
     let mut vars = [0f32; 3];
-    let mut runc = 1f32;
+    let mut runc = 1.0;
+    let mut runs = 1.0;
 
     // gather statistics on the points in the subtree using Welford's algorithm
     for i in 0..indices.len() {
@@ -357,11 +358,12 @@ where
 
         for k in 0..3 {
             let delta = point[k] - mean[k];
-            mean[k] += delta / runc;
+            mean[k] += delta * runs;
             vars[k] += delta * (point[k] - mean[k]);
         }
 
         runc += 1.0;
+        runs = 1.0 / runc;
     }
 
     // split axis is one where the variance is largest
