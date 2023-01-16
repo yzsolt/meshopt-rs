@@ -125,7 +125,7 @@ impl Mesh {
         println!(
             "# {:?}: {} vertices, {} triangles; read in {:.2} msec; indexed in {:.2} msec",
             path,
-            vertices.len(),
+            result.vertices.len(),
             total_indices / 3,
             read.as_micros() as f64 / 1000.0,
             indexed.as_micros() as f64 / 1000.0,
