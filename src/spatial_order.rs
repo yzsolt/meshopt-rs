@@ -122,12 +122,6 @@ where
 
     let face_count = indices.len() / 3;
 
-    impl Position for Vector3 {
-        fn pos(&self) -> [f32; 3] {
-            [self.x, self.y, self.z]
-        }
-    }
-
     let mut centroids = vec![Vector3::default(); face_count];
 
     for i in 0..face_count {
