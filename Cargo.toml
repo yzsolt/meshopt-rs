@@ -20,9 +20,9 @@ keywords = ["gamedev", "graphics", "meshing", "meshopt"]
 experimental = []
 
 [dev-dependencies]
-criterion = "0.4.0"
-miniz_oxide = "0.6.2"
-tobj = "3.2.3"
+criterion = "0.7.0"
+miniz_oxide = "0.8.9"
+tobj = "4.0.3"
 
 [[bench]]
 name = "with_input"
