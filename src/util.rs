@@ -4,11 +4,7 @@ use std::io::{Read, Write};
 
 #[inline(always)]
 pub(crate) fn zero_inverse(value: f32) -> f32 {
-    if value != 0.0 {
-        1.0 / value
-    } else {
-        0.0
-    }
+    if value != 0.0 { 1.0 / value } else { 0.0 }
 }
 
 pub(crate) fn as_bytes<T>(data: &[T]) -> &[u8] {

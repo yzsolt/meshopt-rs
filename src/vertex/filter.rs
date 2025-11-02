@@ -101,10 +101,10 @@ fn decode_filter_quat_scalar(data: &mut [[u16; 4]]) {
         let qc = (q[3] & 3) as usize;
 
         // output order is dictated by input index
-        q[((qc + 1) & 3)] = (xf as i16) as u16;
-        q[((qc + 2) & 3)] = (yf as i16) as u16;
-        q[((qc + 3) & 3)] = (zf as i16) as u16;
-        q[((qc + 0) & 3)] = (wf as i16) as u16;
+        q[(qc + 1) & 3] = (xf as i16) as u16;
+        q[(qc + 2) & 3] = (yf as i16) as u16;
+        q[(qc + 3) & 3] = (zf as i16) as u16;
+        q[(qc + 0) & 3] = (wf as i16) as u16;
     }
 }
 

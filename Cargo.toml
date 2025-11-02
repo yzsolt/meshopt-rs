@@ -2,11 +2,17 @@
 name = "meshopt-rs"
 version = "0.1.2"
 authors = ["yzsolt"]
-edition = "2021"
+edition = "2024"
 license = "MIT"
 description = "Pure Rust implementation of the meshoptimizer library"
 repository = "https://github.com/yzsolt/meshopt-rs"
-categories = ["algorithms", "encoding", "game-development", "graphics", "rendering::data-formats"]
+categories = [
+    "algorithms",
+    "encoding",
+    "game-development",
+    "graphics",
+    "rendering::data-formats",
+]
 keywords = ["gamedev", "graphics", "meshing", "meshopt"]
 
 [features]
@@ -14,9 +20,9 @@ keywords = ["gamedev", "graphics", "meshing", "meshopt"]
 experimental = []
 
 [dev-dependencies]
-criterion = "0.4.0"
-miniz_oxide = "0.6.2"
-tobj = "3.2.3"
+criterion = "0.7.0"
+miniz_oxide = "0.8.9"
+tobj = "4.0.3"
 
 [[bench]]
 name = "with_input"

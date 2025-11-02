@@ -1,11 +1,11 @@
 //! **Experimental** mesh and point cloud simplification
 
-use crate::util::zero_inverse;
-use crate::vertex::{calc_pos_extents, Position};
-use crate::Vector3;
 use crate::INVALID_INDEX;
+use crate::Vector3;
+use crate::util::zero_inverse;
+use crate::vertex::{Position, calc_pos_extents};
 
-use std::collections::{hash_map::Entry, HashMap};
+use std::collections::{HashMap, hash_map::Entry};
 use std::ops::AddAssign;
 
 #[derive(Default)]
@@ -671,20 +671,8 @@ fn rank_edge_collapses(
 
         // most edges are bidirectional which means we need to evaluate errors for two collapses
         // to keep this code branchless we just use the same edge for unidirectional edges
-        let j0 = unsafe {
-            if c.u.bidi != 0 {
-                i1
-            } else {
-                i0
-            }
-        };
-        let j1 = unsafe {
-            if c.u.bidi != 0 {
-                i0
-            } else {
-                i1
-            }
-        };
+        let j0 = unsafe { if c.u.bidi != 0 { i1 } else { i0 } };
+        let j1 = unsafe { if c.u.bidi != 0 { i0 } else { i1 } };
 
         let qi = vertex_quadrics[remap[i0 as usize] as usize];
         let qj = vertex_quadrics[remap[j0 as usize] as usize];
@@ -1253,11 +1241,7 @@ where
         grid_size = if grid_size <= min_grid {
             min_grid + 1
         } else {
-            if grid_size >= max_grid {
-                max_grid - 1
-            } else {
-                grid_size
-            }
+            if grid_size >= max_grid { max_grid - 1 } else { grid_size }
         };
 
         compute_vertex_ids(&mut vertex_ids, &vertex_positions, grid_size);
@@ -1383,11 +1367,7 @@ where
         grid_size = if grid_size <= min_grid {
             min_grid + 1
         } else {
-            if grid_size >= max_grid {
-                max_grid - 1
-            } else {
-                grid_size
-            }
+            if grid_size >= max_grid { max_grid - 1 } else { grid_size }
         };
 
         compute_vertex_ids(&mut vertex_ids, &vertex_positions, grid_size);

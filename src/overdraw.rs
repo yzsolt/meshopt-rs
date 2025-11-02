@@ -1,9 +1,9 @@
 //! Overdraw analysis and optimization
 
+use crate::Vector3;
 use crate::quantize::quantize_unorm;
 use crate::util::zero_inverse;
-use crate::vertex::{calc_pos_extents, Position};
-use crate::Vector3;
+use crate::vertex::{Position, calc_pos_extents};
 
 const VIEWPORT: usize = 256;
 

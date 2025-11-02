@@ -4,7 +4,7 @@ use crate::INVALID_INDEX;
 
 use std::io::{Read, Write};
 
-use super::{decode_v_byte, encode_v_byte, read_byte, write_byte, DecodeError, IndexEncodingVersion};
+use super::{DecodeError, IndexEncodingVersion, decode_v_byte, encode_v_byte, read_byte, write_byte};
 
 const INDEX_HEADER: u8 = 0xe0;
 
@@ -24,15 +24,7 @@ const CODE_AUX_ENCODING_TABLE: [u8; 16] = [
 ];
 
 fn rotate_triangle(b: u32, c: u32, next: u32) -> i32 {
-    if b == next {
-        1
-    } else {
-        if c == next {
-            2
-        } else {
-            0
-        }
-    }
+    if b == next { 1 } else { if c == next { 2 } else { 0 } }
 }
 
 fn get_edge_fifo(fifo: &EdgeFifo, a: u32, b: u32, c: u32, offset: usize) -> i32 {

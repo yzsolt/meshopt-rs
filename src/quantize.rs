@@ -36,7 +36,7 @@ pub fn quantize_snorm(mut v: f32, n: i32) -> i32 {
 ///
 /// Maximum relative reconstruction error: `5e-4`
 pub fn quantize_half(v: f32) -> u16 {
-    let ui: u32 = unsafe { std::mem::transmute(v) };
+    let ui: u32 = f32::to_bits(v);
 
     let s = (ui >> 16) & 0x8000;
     let em = ui & 0x7fffffff;
@@ -62,7 +62,7 @@ pub fn quantize_half(v: f32) -> u16 {
 ///
 /// Assumes `n` is in a valid mantissa precision range, which is 1..23
 pub fn quantize_float(v: f32, n: i32) -> f32 {
-    let mut ui: u32 = unsafe { std::mem::transmute(v) };
+    let mut ui: u32 = f32::to_bits(v);
 
     let mask: u32 = (1 << (23 - n)) - 1;
     let round = (1 << (23 - n)) >> 1;
@@ -76,5 +76,5 @@ pub fn quantize_float(v: f32, n: i32) -> f32 {
     // flush denormals to zero
     ui = if e == 0 { 0 } else { ui };
 
-    unsafe { std::mem::transmute(ui) }
+    f32::from_bits(ui)
 }

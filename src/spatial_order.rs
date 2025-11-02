@@ -1,8 +1,8 @@
 //! **Experimental** spatial sorting
 
-use crate::util::zero_inverse;
-use crate::vertex::{calc_pos_extents, Position};
 use crate::Vector3;
+use crate::util::zero_inverse;
+use crate::vertex::{Position, calc_pos_extents};
 
 // "Insert" two 0 bits after each of the 10 low bits of x
 #[inline(always)]
@@ -121,12 +121,6 @@ where
     assert!(indices.len() % 3 == 0);
 
     let face_count = indices.len() / 3;
-
-    impl Position for Vector3 {
-        fn pos(&self) -> [f32; 3] {
-            [self.x, self.y, self.z]
-        }
-    }
 
     let mut centroids = vec![Vector3::default(); face_count];
 

@@ -19,6 +19,8 @@ pub mod vertex;
 
 use std::ops::Range;
 
+use crate::vertex::Position;
+
 pub const INVALID_INDEX: u32 = u32::MAX;
 
 /// A stream of value groups which are meant to be used together (e.g. 3 floats representing a vertex position).
@@ -137,5 +139,11 @@ impl Vector3 {
         }
 
         length
+    }
+}
+
+impl Position for Vector3 {
+    fn pos(&self) -> [f32; 3] {
+        [self.x, self.y, self.z]
     }
 }

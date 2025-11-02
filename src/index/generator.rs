@@ -1,9 +1,9 @@
 //! Index buffer generation and index/vertex buffer remapping
 
-use crate::{Stream, INVALID_INDEX};
+use crate::{INVALID_INDEX, Stream};
 
-use std::collections::hash_map::Entry;
 use std::collections::HashMap;
+use std::collections::hash_map::Entry;
 use std::hash::{BuildHasherDefault, Hasher};
 
 #[derive(Default)]
