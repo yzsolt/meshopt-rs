@@ -2,7 +2,7 @@
 
 use std::io::Write;
 
-use super::{decode_v_byte, encode_v_byte, read_byte, write_byte, DecodeError, IndexEncodingVersion};
+use super::{DecodeError, IndexEncodingVersion, decode_v_byte, encode_v_byte, read_byte, write_byte};
 
 const SEQUENCE_HEADER: u8 = 0xd0;
 

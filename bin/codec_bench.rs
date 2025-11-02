@@ -1,11 +1,11 @@
-use meshopt_rs::index::buffer::{decode_index_buffer, encode_index_buffer, encode_index_buffer_bound};
 use meshopt_rs::index::IndexEncodingVersion;
+use meshopt_rs::index::buffer::{decode_index_buffer, encode_index_buffer, encode_index_buffer_bound};
+use meshopt_rs::vertex::Position;
+use meshopt_rs::vertex::VertexEncodingVersion;
 use meshopt_rs::vertex::buffer::{decode_vertex_buffer, encode_vertex_buffer, encode_vertex_buffer_bound};
 use meshopt_rs::vertex::cache::{optimize_vertex_cache, optimize_vertex_cache_strip};
 use meshopt_rs::vertex::fetch::optimize_vertex_fetch;
-use meshopt_rs::vertex::filter::{decode_filter_exp, decode_filter_oct_16, decode_filter_oct_8, decode_filter_quat};
-use meshopt_rs::vertex::Position;
-use meshopt_rs::vertex::VertexEncodingVersion;
+use meshopt_rs::vertex::filter::{decode_filter_exp, decode_filter_oct_8, decode_filter_oct_16, decode_filter_quat};
 use std::time::Instant;
 
 #[derive(Clone, Copy, Default)]
@@ -156,11 +156,17 @@ fn bench_filters(count: usize, besto8: &mut f64, besto12: &mut f64, bestq12: &mu
         let quat_throughput = d8_size as f64 / GB / quat_time;
         let exp_throughput = d8_size as f64 / GB / exp_time;
 
-        println!("filter: oct8 {:.2} ms ({:.2} GB/sec), oct12 {:.2} ms ({:.2} GB/sec), quat12 {:.2} ms ({:.2} GB/sec), exp {:.2} ms ({:.2} GB/sec)",
-			oct_8_time, oct_8_throughput,
-			oct_16_time,oct_16_throughput,
-			quat_time, quat_throughput,
-			exp_time, exp_throughput);
+        println!(
+            "filter: oct8 {:.2} ms ({:.2} GB/sec), oct12 {:.2} ms ({:.2} GB/sec), quat12 {:.2} ms ({:.2} GB/sec), exp {:.2} ms ({:.2} GB/sec)",
+            oct_8_time,
+            oct_8_throughput,
+            oct_16_time,
+            oct_16_throughput,
+            quat_time,
+            quat_throughput,
+            exp_time,
+            exp_throughput
+        );
 
         *besto8 = besto8.max(oct_8_throughput);
         *besto12 = besto12.max(oct_16_throughput);

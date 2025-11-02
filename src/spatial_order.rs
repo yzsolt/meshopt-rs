@@ -1,8 +1,8 @@
 //! **Experimental** spatial sorting
 
-use crate::util::zero_inverse;
-use crate::vertex::{calc_pos_extents, Position};
 use crate::Vector3;
+use crate::util::zero_inverse;
+use crate::vertex::{Position, calc_pos_extents};
 
 // "Insert" two 0 bits after each of the 10 low bits of x
 #[inline(always)]

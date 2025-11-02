@@ -8,7 +8,7 @@ use meshopt_rs::vertex::buffer::*;
 use meshopt_rs::vertex::cache::*;
 use meshopt_rs::vertex::fetch::*;
 use meshopt_rs::vertex::*;
-use meshopt_rs::{Stream, INVALID_INDEX};
+use meshopt_rs::{INVALID_INDEX, Stream};
 
 #[cfg(feature = "experimental")]
 use meshopt_rs::{cluster::*, index::sequence::*, simplify::*, spatial_order::*};
@@ -395,8 +395,8 @@ where
 }
 
 fn compress_data<T>(data: &[T]) -> usize {
-    use miniz_oxide::deflate::core::*;
     use miniz_oxide::deflate::CompressionLevel;
+    use miniz_oxide::deflate::core::*;
 
     let flags = create_comp_flags_from_zip_params(
         CompressionLevel::DefaultLevel as i32,
@@ -452,14 +452,15 @@ fn encode_index(mesh: &Mesh, desc: char) {
         assert!(triangle == r || triangle == r1 || triangle == r2);
     }
 
-    println!("IdxCodec{}: {:.1} bits/triangle (post-deflate {:.1} bits/triangle); encode {:.2} msec, decode {:.2} msec ({:.2} GB/s)",
-		desc,
-		(buffer.len() * 8) as f64 / (mesh.indices.len() / 3) as f64,
-		(csize * 8) as f64 / (mesh.indices.len() / 3) as f64,
-		encode.as_micros() as f64 / 1000.0,
-		decode.as_micros() as f64 / 1000.0,
-		((result.len() * 4) as f64 / (1 << 30) as f64) / decode.as_secs_f64(),
-	);
+    println!(
+        "IdxCodec{}: {:.1} bits/triangle (post-deflate {:.1} bits/triangle); encode {:.2} msec, decode {:.2} msec ({:.2} GB/s)",
+        desc,
+        (buffer.len() * 8) as f64 / (mesh.indices.len() / 3) as f64,
+        (csize * 8) as f64 / (mesh.indices.len() / 3) as f64,
+        encode.as_micros() as f64 / 1000.0,
+        decode.as_micros() as f64 / 1000.0,
+        ((result.len() * 4) as f64 / (1 << 30) as f64) / decode.as_secs_f64(),
+    );
 }
 
 #[cfg(feature = "experimental")]
@@ -485,14 +486,15 @@ fn encode_index_sequence1(data: &[u32], vertex_count: usize, desc: char) {
 
     assert_eq!(data, result);
 
-    println!("IdxCodec{}: {:.1} bits/index (post-deflate {:.1} bits/index); encode {:.2} msec, decode {:.2} msec ({:.2} GB/s)",
-		desc,
-		(buffer.len() * 8) as f64 / data.len() as f64,
-		(csize * 8) as f64 / data.len() as f64,
-		encode.as_micros() as f64 / 1000.0,
-		decode.as_micros() as f64 / 1000.0,
-		((result.len() * 4) as f64 / (1 << 30) as f64) / decode.as_secs_f64(),
-	);
+    println!(
+        "IdxCodec{}: {:.1} bits/index (post-deflate {:.1} bits/index); encode {:.2} msec, decode {:.2} msec ({:.2} GB/s)",
+        desc,
+        (buffer.len() * 8) as f64 / data.len() as f64,
+        (csize * 8) as f64 / data.len() as f64,
+        encode.as_micros() as f64 / 1000.0,
+        decode.as_micros() as f64 / 1000.0,
+        ((result.len() * 4) as f64 / (1 << 30) as f64) / decode.as_secs_f64(),
+    );
 }
 
 fn pack_vertex(mesh: &Mesh) {
@@ -546,14 +548,15 @@ where
 
     let csize = compress_data(&vbuf);
 
-    println!("VtxCodec{:1}: {:.1} bits/vertex (post-deflate {:.1} bits/vertex); encode {:2} msec, decode {:2} msec ({:2} GB/s)", 
-		pvn,
-		(vbuf.len() * 8) as f64/ pv.len() as f64,
-		(csize * 8) as f64 / pv.len() as f64,
-		encode.as_micros() as f64 / 1000.0,
-		decode.as_micros() as f64 / 1000.0,
-		((result.len() * std::mem::size_of::<PV>()) as f64 / (1 << 30) as f64) / decode.as_secs_f64(),
-	);
+    println!(
+        "VtxCodec{:1}: {:.1} bits/vertex (post-deflate {:.1} bits/vertex); encode {:2} msec, decode {:2} msec ({:2} GB/s)",
+        pvn,
+        (vbuf.len() * 8) as f64 / pv.len() as f64,
+        (csize * 8) as f64 / pv.len() as f64,
+        encode.as_micros() as f64 / 1000.0,
+        decode.as_micros() as f64 / 1000.0,
+        ((result.len() * std::mem::size_of::<PV>()) as f64 / (1 << 30) as f64) / decode.as_secs_f64(),
+    );
 }
 
 #[cfg(feature = "experimental")]
@@ -1036,13 +1039,14 @@ fn spatial_sort_mesh_triangles(mesh: &Mesh) {
     let csizev = compress_data(&vbuf);
     let csizei = compress_data(&ibuf);
 
-    println!("SpatialT : {:.1} bits/vertex (post-deflate {:.1} bits/vertex); {:.1} bits/triangle (post-deflate {:.1} bits/triangle); sort {:.2} msec",
-		(vbuf.len() * 8) as f64 / mesh.vertices.len() as f64,
-		(csizev * 8) as f64 / mesh.vertices.len() as f64,
-		(ibuf.len() * 8) as f64 / (mesh.indices.len() / 3) as f64,
-		(csizei * 8) as f64 / (mesh.indices.len() / 3) as f64,
-		duration.as_micros() as f64 / 1000.0,
-	);
+    println!(
+        "SpatialT : {:.1} bits/vertex (post-deflate {:.1} bits/vertex); {:.1} bits/triangle (post-deflate {:.1} bits/triangle); sort {:.2} msec",
+        (vbuf.len() * 8) as f64 / mesh.vertices.len() as f64,
+        (csizev * 8) as f64 / mesh.vertices.len() as f64,
+        (ibuf.len() * 8) as f64 / (mesh.indices.len() / 3) as f64,
+        (csizei * 8) as f64 / (mesh.indices.len() / 3) as f64,
+        duration.as_micros() as f64 / 1000.0,
+    );
 }
 
 fn process_deinterleaved<P>(path: P) -> Result<(), tobj::LoadError>
@@ -1140,9 +1144,13 @@ where
 
     let shadow = start.elapsed();
 
-    println!("Deintrlvd: {} vertices, reindexed in {:.2} msec, optimized in {:.2} msec, generated & optimized shadow indices in {:.2} msec",
-		total_vertices, reindex.as_micros() as f64 / 1000.0, optimize.as_micros() as f64 / 1000.0, shadow.as_micros() as f64 / 1000.0
-	);
+    println!(
+        "Deintrlvd: {} vertices, reindexed in {:.2} msec, optimized in {:.2} msec, generated & optimized shadow indices in {:.2} msec",
+        total_vertices,
+        reindex.as_micros() as f64 / 1000.0,
+        optimize.as_micros() as f64 / 1000.0,
+        shadow.as_micros() as f64 / 1000.0
+    );
 
     Ok(())
 }

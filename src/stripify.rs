@@ -274,9 +274,5 @@ pub fn unstripify(destination: &mut [u32], indices: &[u32], restart_index: u32) 
 pub fn unstripify_bound(index_count: usize) -> usize {
     assert!(index_count == 0 || index_count >= 3);
 
-    if index_count == 0 {
-        0
-    } else {
-        (index_count - 2) * 3
-    }
+    if index_count == 0 { 0 } else { (index_count - 2) * 3 }
 }

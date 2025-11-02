@@ -1,21 +1,21 @@
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 
+use meshopt_rs::Stream;
 #[cfg(feature = "experimental")]
-use meshopt_rs::cluster::{build_meshlets, build_meshlets_bound, compute_meshlet_bounds, Meshlet};
+use meshopt_rs::cluster::{Meshlet, build_meshlets, build_meshlets_bound, compute_meshlet_bounds};
+use meshopt_rs::index::IndexEncodingVersion;
 use meshopt_rs::index::buffer::{decode_index_buffer, encode_index_buffer, encode_index_buffer_bound};
 use meshopt_rs::index::generator::{
     generate_shadow_index_buffer, generate_vertex_remap, remap_index_buffer, remap_vertex_buffer,
 };
 #[cfg(feature = "experimental")]
 use meshopt_rs::index::sequence::{decode_index_sequence, encode_index_sequence, encode_index_sequence_bound};
-use meshopt_rs::index::IndexEncodingVersion;
 use meshopt_rs::overdraw::optimize_overdraw;
 #[cfg(feature = "experimental")]
 use meshopt_rs::stripify::{stripify, stripify_bound};
+use meshopt_rs::vertex::Position;
 use meshopt_rs::vertex::cache::{optimize_vertex_cache, optimize_vertex_cache_fifo, optimize_vertex_cache_strip};
 use meshopt_rs::vertex::fetch::{optimize_vertex_fetch, optimize_vertex_fetch_remap};
-use meshopt_rs::vertex::Position;
-use meshopt_rs::Stream;
 
 use std::fmt::Debug;
 use std::path::Path;
