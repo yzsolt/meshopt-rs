@@ -6,6 +6,7 @@ use crate::util::zero_inverse;
 use crate::vertex::{Position, calc_pos_extents};
 
 use std::collections::{HashMap, hash_map::Entry};
+use std::fmt::Debug;
 use std::ops::AddAssign;
 
 #[derive(Default)]
@@ -377,25 +378,19 @@ where
     }
 }
 
-#[derive(Clone, Copy, Default)]
-struct Quadric {
-    a00: f32,
-    a11: f32,
-    a22: f32,
-    a10: f32,
-    a20: f32,
-    a21: f32,
-    b0: f32,
-    b1: f32,
-    b2: f32,
-    c: f32,
-    w: f32,
-}
-
 union CollapseUnion {
     bidi: u32,
     error: f32,
     errorui: u32,
+}
+
+impl Debug for CollapseUnion {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CollapseUnion")
+            .field("bidi/errorui", unsafe { &self.bidi })
+            .field("error", unsafe { &self.error })
+            .finish()
+    }
 }
 
 impl Clone for CollapseUnion {
@@ -412,11 +407,26 @@ impl Default for CollapseUnion {
     }
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone, Default, Debug)]
 struct Collapse {
     v0: u32,
     v1: u32,
     u: CollapseUnion,
+}
+
+#[derive(Clone, Copy, Default, Debug)]
+struct Quadric {
+    a00: f32,
+    a11: f32,
+    a22: f32,
+    a10: f32,
+    a20: f32,
+    a21: f32,
+    b0: f32,
+    b1: f32,
+    b2: f32,
+    c: f32,
+    w: f32,
 }
 
 impl AddAssign for Quadric {

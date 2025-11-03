@@ -116,7 +116,7 @@ impl<'a> Stream<'a> {
     }
 }
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy, Default, Debug)]
 struct Vector3 {
     x: f32,
     y: f32,
