@@ -18,6 +18,8 @@ keywords = ["gamedev", "graphics", "meshing", "meshopt"]
 [features]
 # Experimental APIs have unstable interface and might have implementation that's not fully tested or optimized
 experimental = []
+# Provides additional logging, useful for debugging
+trace = []
 
 [dev-dependencies]
 criterion = "0.7.0"

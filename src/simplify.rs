@@ -268,6 +268,9 @@ fn classify_vertices(
         }
     }
 
+    #[cfg(feature = "trace")]
+    let mut locked_stats = [0usize; 4];
+
     for i in 0..vertex_count {
         if remap[i] == i as u32 {
             if wedge[i] == i as u32 {
@@ -284,6 +287,11 @@ fn classify_vertices(
                     result[i] = VertexKind::Border;
                 } else {
                     result[i] = VertexKind::Locked;
+
+                    #[cfg(feature = "trace")]
+                    {
+                        locked_stats[0] += 1;
+                    }
                 }
             } else if wedge[wedge[i] as usize] == i as u32 {
                 // attribute seam; need to distinguish between Seam and Locked
@@ -307,13 +315,28 @@ fn classify_vertices(
                         result[i] = VertexKind::Seam;
                     } else {
                         result[i] = VertexKind::Locked;
+
+                        #[cfg(feature = "trace")]
+                        {
+                            locked_stats[1] += 1;
+                        }
                     }
                 } else {
                     result[i] = VertexKind::Locked;
+
+                    #[cfg(feature = "trace")]
+                    {
+                        locked_stats[2] += 1;
+                    }
                 }
             } else {
                 // more than one vertex maps to this one; we don't have classification available
                 result[i] = VertexKind::Locked;
+
+                #[cfg(feature = "trace")]
+                {
+                    locked_stats[3] += 1;
+                }
             }
         } else {
             assert!(remap[i] < i as u32);
@@ -321,6 +344,12 @@ fn classify_vertices(
             result[i] = result[remap[i] as usize];
         }
     }
+
+    #[cfg(feature = "trace")]
+    println!(
+        "locked: many open edges {}, disconnected seam {}, many seam edges {}, many wedges {}",
+        locked_stats[0], locked_stats[1], locked_stats[2], locked_stats[3]
+    );
 }
 
 fn rescale_positions<Vertex>(result: &mut [Vector3], vertices: &[Vertex])
@@ -684,6 +713,61 @@ fn rank_edge_collapses(
         c.v0 = if ei <= ej { i0 } else { j0 };
         c.v1 = if ei <= ej { i1 } else { j1 };
         c.u.error = ei.min(ej);
+    }
+}
+
+#[cfg(feature = "trace")]
+fn dump_edge_collapses(collapses: &[Collapse], vertex_kind: &[VertexKind]) {
+    let mut ckinds = [[0usize; KIND_COUNT]; KIND_COUNT];
+    let mut cerrors = [[f32::MAX; KIND_COUNT]; KIND_COUNT];
+
+    for i in 0..collapses.len() {
+        let i0 = collapses[i].v0;
+        let i1 = collapses[i].v1;
+
+        let k0 = vertex_kind[i0 as usize] as usize;
+        let k1 = vertex_kind[i1 as usize] as usize;
+
+        ckinds[k0][k1] += 1;
+        cerrors[k0][k1] = cerrors[k0][k1].min(unsafe { collapses[i].u.error });
+    }
+
+    for k0 in 0..KIND_COUNT {
+        for k1 in 0..KIND_COUNT {
+            if ckinds[k0][k1] != 0 {
+                println!(
+                    "collapses {k0} -> {k1}: {}, min error {:e}",
+                    ckinds[k0][k1], cerrors[k0][k1]
+                );
+            }
+        }
+    }
+}
+
+#[cfg(feature = "trace")]
+fn dump_locked_collapses(indices: &[u32], vertex_kind: &[VertexKind]) {
+    let mut locked_collapses = [[0usize; KIND_COUNT]; KIND_COUNT];
+
+    for i in indices.chunks_exact(3) {
+        const NEXT: [usize; 3] = [1, 2, 0];
+
+        for e in 0..3 {
+            let i0 = i[e] as usize;
+            let i1 = i[NEXT[e]] as usize;
+
+            let k0 = vertex_kind[i0].index();
+            let k1 = vertex_kind[i1].index();
+
+            locked_collapses[k0][k1] += (!CAN_COLLAPSE[k0][k1] && !CAN_COLLAPSE[k1][k0]) as usize;
+        }
+    }
+
+    for k0 in 0..KIND_COUNT {
+        for k1 in 0..KIND_COUNT {
+            if locked_collapses[k0][k1] != 0 {
+                println!("locked collapses {k0} -> {k1}: {}", locked_collapses[k0][k1]);
+            }
+        }
     }
 }
 
@@ -1080,6 +1164,33 @@ where
         &wedge,
     );
 
+    #[cfg(feature = "trace")]
+    {
+        let mut unique_positions = 0;
+        for i in 0..vertices.len() {
+            unique_positions += (remap[i] as usize == i) as u32;
+        }
+
+        println!(
+            "position remap: {} vertices => {unique_positions} positions",
+            vertices.len(),
+        );
+
+        let mut kinds = [0_u32; KIND_COUNT];
+        for i in 0..vertices.len() {
+            kinds[vertex_kind[i].index()] += (remap[i] as usize == i) as u32;
+        }
+
+        println!(
+            "kinds: manifold {}, border {}, seam {}, complex {}, locked {}",
+            kinds[VertexKind::Manifold.index()],
+            kinds[VertexKind::Border.index()],
+            kinds[VertexKind::Seam.index()],
+            kinds[VertexKind::Complex.index()],
+            kinds[VertexKind::Locked.index()],
+        );
+    }
+
     let mut vertex_positions = vec![Vector3::default(); vertices.len()]; // TODO: spare init?
     rescale_positions(&mut vertex_positions, vertices);
 
@@ -1109,6 +1220,11 @@ where
     // `target_error` input is linear; we need to adjust it to match `Quadric::error` units
     let error_limit = target_error * target_error;
 
+    #[cfg(feature = "trace")]
+    let mut pass_count = 0;
+    #[cfg(feature = "trace")]
+    let mut worst_error = 0.0;
+
     while result_count > target_index_count {
         let edge_collapse_count = pick_edge_collapses(
             &mut edge_collapses,
@@ -1129,6 +1245,9 @@ where
             &vertex_quadrics,
             &remap,
         );
+
+        #[cfg(feature = "trace")]
+        dump_edge_collapses(&edge_collapses[0..edge_collapse_count], &vertex_kind);
 
         sort_edge_collapses(&mut collapse_order, &edge_collapses[0..edge_collapse_count]);
 
@@ -1178,8 +1297,39 @@ where
         let new_count = remap_index_buffer(&mut result[0..result_count], &collapse_remap);
         assert!(new_count < result_count);
 
+        #[cfg(feature = "trace")]
+        {
+            let mut pass_error = 0.0;
+            for i in 0..edge_collapse_count {
+                let c = &edge_collapses[collapse_order[i as usize] as usize];
+
+                if collapse_remap[c.v0 as usize] == c.v1 {
+                    pass_error = unsafe { c.u.error };
+                }
+            }
+
+            pass_count += 1;
+            worst_error = if worst_error < pass_error {
+                pass_error
+            } else {
+                worst_error
+            };
+
+            println!(
+                "pass {pass_count}: triangles: {} -> {}, collapses: {collapses}/{edge_collapse_count} (goal: {edge_collapse_goal}), error: {pass_error:e} (limit {error_limit:e} goal {error_goal:e})",
+                result_count / 3,
+                new_count / 3,
+            );
+        }
+
         result_count = new_count;
     }
+
+    #[cfg(feature = "trace")]
+    println!("passes: {pass_count}, worst error: {worst_error:e}");
+
+    #[cfg(feature = "trace")]
+    dump_locked_collapses(&result, &vertex_kind);
 
     result_count
 }
@@ -1218,6 +1368,14 @@ where
     rescale_positions(&mut vertex_positions, vertices);
 
     // find the optimal grid size using guided binary search
+    #[cfg(feature = "trace")]
+    {
+        println!("source: {} vertices, {} triangles", vertices.len(), indices.len() / 3,);
+        println!(
+            "target: {target_cell_count} cells, {} triangles",
+            target_index_count / 3,
+        );
+    }
 
     let mut vertex_ids = vec![0; vertices.len()];
 
@@ -1246,6 +1404,21 @@ where
 
         compute_vertex_ids(&mut vertex_ids, &vertex_positions, grid_size);
         let triangles = count_triangles(&vertex_ids, &indices);
+
+        #[cfg(feature = "trace")]
+        println!(
+            "pass {pass} ({}): grid size {grid_size}, triangles {triangles}, {}",
+            if pass == 0 {
+                "guess"
+            } else {
+                if pass <= INTERPOLATION_PASSES { "lerp" } else { "binary" }
+            },
+            if triangles <= target_index_count / 3 {
+                "under"
+            } else {
+                "over"
+            }
+        );
 
         let tip = interpolate(
             (target_index_count / 3) as f32,
@@ -1314,6 +1487,12 @@ where
     let write = filter_triangles(destination, &mut tritable, &indices, &vertex_cells, &cell_remap);
     assert!(write <= target_index_count);
 
+    #[cfg(feature = "trace")]
+    println!(
+        "result: {cell_count} cells, {} triangles ({min_triangles} unfiltered)",
+        write / 3
+    );
+
     write
 }
 
@@ -1342,6 +1521,11 @@ where
     rescale_positions(&mut vertex_positions, vertices);
 
     // find the optimal grid size using guided binary search
+    #[cfg(feature = "trace")]
+    {
+        println!("source: {} vertices", vertices.len());
+        println!("target: {target_cell_count} cells");
+    }
 
     let mut vertex_ids = vec![0; vertices.len()];
 
@@ -1372,6 +1556,21 @@ where
 
         compute_vertex_ids(&mut vertex_ids, &vertex_positions, grid_size);
         let vertices = count_vertex_cells(&mut table, &vertex_ids);
+
+        #[cfg(feature = "trace")]
+        println!(
+            "pass {pass} ({}): grid size {grid_size}, vertices {vertices}, {}",
+            if pass == 0 {
+                "guess"
+            } else {
+                if pass <= INTERPOLATION_PASSES { "lerp" } else { "binary" }
+            },
+            if vertices <= target_vertex_count {
+                "under"
+            } else {
+                "over"
+            }
+        );
 
         let tip = interpolate(
             target_vertex_count as f32,
@@ -1435,6 +1634,9 @@ where
     // copy results to the output
     assert!(cell_count <= target_vertex_count);
     destination[0..cell_count].copy_from_slice(&cell_remap);
+
+    #[cfg(feature = "trace")]
+    println!("result: {cell_count} cells");
 
     cell_count
 }
