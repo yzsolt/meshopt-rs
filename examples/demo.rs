@@ -19,7 +19,7 @@ use std::hash::{Hash, Hasher};
 use std::path::Path;
 use std::time::Instant;
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy, Default, Debug)]
 #[repr(C)]
 struct Vertex {
     p: [f32; 3],
