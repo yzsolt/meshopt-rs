@@ -569,6 +569,7 @@ fn simplify_mesh(mesh: &Mesh) {
 
     let target_index_count = (mesh.indices.len() as f32 * threshold) as usize;
     let target_error = 0.01;
+    let mut result_error = 0.0;
 
     lod.indices.resize(mesh.indices.len(), 0); // note: simplify needs space for index_count elements in the destination array, not `target_index_count`
     let size = simplify(
@@ -577,6 +578,7 @@ fn simplify_mesh(mesh: &Mesh) {
         &mesh.vertices,
         target_index_count,
         target_error,
+        Some(&mut result_error),
     );
     lod.indices.resize(size, 0);
 
@@ -592,10 +594,11 @@ fn simplify_mesh(mesh: &Mesh) {
     let duration = start.elapsed();
 
     println!(
-        "{:9}: {} triangles => {} triangles in {:.2} msec",
+        "{:9}: {} triangles => {} triangles  ({:.2}% deviation) in {:.2} msec",
         "Simplify",
         mesh.indices.len() / 3,
         lod.indices.len() / 3,
+        result_error * 100.0,
         duration.as_micros() as f64 / 1000.0
     );
 }
@@ -685,7 +688,14 @@ fn simplify_mesh_complete(mesh: &Mesh) {
         }
 
         lod.resize(source.len(), Default::default());
-        let size = simplify(&mut lod, &source, &mesh.vertices, target_index_count, target_error);
+        let size = simplify(
+            &mut lod,
+            &source,
+            &mesh.vertices,
+            target_index_count,
+            target_error,
+            None,
+        );
         lod.resize(size, Default::default());
     }
 

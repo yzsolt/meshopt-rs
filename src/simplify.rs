@@ -299,7 +299,7 @@ fn classify_vertices(
     }
 
     #[cfg(feature = "trace")]
-    let mut locked_stats = [0usize; 4];
+    let mut stats = [0usize; 4];
 
     for i in 0..vertex_count {
         if remap[i] == i as u32 {
@@ -320,7 +320,7 @@ fn classify_vertices(
 
                     #[cfg(feature = "trace")]
                     {
-                        locked_stats[0] += 1;
+                        stats[0] += 1;
                     }
                 }
             } else if wedge[wedge[i] as usize] == i as u32 {
@@ -348,7 +348,7 @@ fn classify_vertices(
 
                         #[cfg(feature = "trace")]
                         {
-                            locked_stats[1] += 1;
+                            stats[1] += 1;
                         }
                     }
                 } else {
@@ -356,7 +356,7 @@ fn classify_vertices(
 
                     #[cfg(feature = "trace")]
                     {
-                        locked_stats[2] += 1;
+                        stats[2] += 1;
                     }
                 }
             } else {
@@ -365,7 +365,7 @@ fn classify_vertices(
 
                 #[cfg(feature = "trace")]
                 {
-                    locked_stats[3] += 1;
+                    stats[3] += 1;
                 }
             }
         } else {
@@ -378,11 +378,11 @@ fn classify_vertices(
     #[cfg(feature = "trace")]
     println!(
         "locked: many open edges {}, disconnected seam {}, many seam edges {}, many wedges {}",
-        locked_stats[0], locked_stats[1], locked_stats[2], locked_stats[3]
+        stats[0], stats[1], stats[2], stats[3]
     );
 }
 
-fn rescale_positions<Vertex>(result: &mut [Vector3], vertices: &[Vertex])
+fn rescale_positions<Vertex>(result: &mut [Vector3], vertices: &[Vertex]) -> f32
 where
     Vertex: Position,
 {
@@ -405,6 +405,8 @@ where
         pos.y = (pos.y - minv[1]) * scale;
         pos.z = (pos.z - minv[2]) * scale;
     }
+
+    extent
 }
 
 union CollapseUnion {
@@ -832,7 +834,12 @@ fn dump_edge_collapses(collapses: &[Collapse], vertex_kind: &[VertexKind]) {
             if ckinds[k0][k1] != 0 {
                 println!(
                     "collapses {k0} -> {k1}: {}, min error {:e}",
-                    ckinds[k0][k1], cerrors[k0][k1]
+                    ckinds[k0][k1],
+                    if ckinds[k0][k1] != 0 {
+                        cerrors[k0][k1].sqrt()
+                    } else {
+                        0.0
+                    }
                 );
             }
         }
@@ -913,6 +920,7 @@ fn perform_edge_collapses(
     adjacency: &EdgeAdjacency,
     triangle_collapse_goal: usize,
     error_limit: f32,
+    result_error: &mut f32,
 ) -> usize {
     let mut edge_collapses = 0;
     let mut triangle_collapses = 0;
@@ -1009,6 +1017,8 @@ fn perform_edge_collapses(
         // border edges collapse 1 triangle, other edges collapse 2 or more
         triangle_collapses += if vertex_kind[i0] == VertexKind::Border { 1 } else { 2 };
         edge_collapses += 1;
+
+        *result_error = result_error.max(unsafe { c.u.error });
     }
 
     edge_collapses
@@ -1242,12 +1252,15 @@ fn interpolate(y: f32, x0: f32, y0: f32, x1: f32, y1: f32, x2: f32, y2: f32) -> 
 /// # Arguments
 ///
 /// * `destination`: must contain enough space for the **source** index buffer (since optimization is iterative, this means `indices.len()` elements - **not** `target_index_count`!)
+/// * `target_error`: represents the error relative to mesh extents that can be tolerated, e.g. 0.01 = 1% deformation
+/// * `result_error`: can be None; when it's not None, it will contain the resulting (relative) error after simplification
 pub fn simplify<Vertex>(
     destination: &mut [u32],
     indices: &[u32],
     vertices: &[Vertex],
     target_index_count: usize,
     target_error: f32,
+    result_error: Option<&mut f32>,
 ) -> usize
 where
     Vertex: Position,
@@ -1332,14 +1345,13 @@ where
     let mut collapse_locked = vec![false; vertices.len()];
 
     let mut result_count = indices.len();
+    let mut result_error_max = 0.0;
 
     // `target_error` input is linear; we need to adjust it to match `Quadric::error` units
     let error_limit = target_error * target_error;
 
     #[cfg(feature = "trace")]
     let mut pass_count = 0;
-    #[cfg(feature = "trace")]
-    let mut worst_error = 0.0;
 
     while result_count > target_index_count {
         // note: throughout the simplification process adjacency structure reflects welded topology for result-in-progress
@@ -1378,6 +1390,12 @@ where
 
         collapse_locked.fill(false);
 
+        #[cfg(feature = "trace")]
+        {
+            println!("pass: {pass_count}");
+            pass_count += 1;
+        }
+
         let collapses = perform_edge_collapses(
             &mut collapse_remap,
             &mut collapse_locked,
@@ -1391,6 +1409,7 @@ where
             &adjacency,
             triangle_collapse_goal,
             error_limit,
+            &mut result_error_max,
         );
 
         // no edges can be collapsed any more due to hitting the error limit or triangle collapse limit
@@ -1404,39 +1423,22 @@ where
         let new_count = remap_index_buffer(&mut result[0..result_count], &collapse_remap);
         assert!(new_count < result_count);
 
-        #[cfg(feature = "trace")]
-        {
-            let mut pass_error = 0.0;
-            for i in 0..edge_collapse_count {
-                let c = &edge_collapses[collapse_order[i as usize] as usize];
-
-                if collapse_remap[c.v0 as usize] == c.v1 {
-                    pass_error = unsafe { c.u.error };
-                }
-            }
-
-            pass_count += 1;
-            worst_error = if worst_error < pass_error {
-                pass_error
-            } else {
-                worst_error
-            };
-
-            println!(
-                "pass {pass_count}: triangles: {} -> {}, collapses: {collapses}/{edge_collapse_count} (goal: {edge_collapse_goal}), error: {pass_error:e} (limit {error_limit:e} goal {error_goal:e})",
-                result_count / 3,
-                new_count / 3,
-            );
-        }
-
         result_count = new_count;
     }
 
     #[cfg(feature = "trace")]
-    println!("passes: {pass_count}, worst error: {worst_error:e}");
+    println!(
+        "result: {result_count} triangles, error: {:e}; total {pass_count} passes",
+        result_error_max.sqrt()
+    );
 
     #[cfg(feature = "trace")]
     dump_locked_collapses(&result, &vertex_kind);
+
+    // result_error is quadratic; we need to remap it back to linear
+    if let Some(result_error) = result_error {
+        *result_error = result_error_max.sqrt();
+    }
 
     result_count
 }
@@ -1748,6 +1750,19 @@ where
     cell_count
 }
 
+/// Returns the error scaling factor used by the simplifier to convert between absolute and relative extents
+///
+/// Absolute error must be **divided** by the scaling factor before passing it to [simplify] as `target_error`.
+/// Relative error returned by [simplify] via `result_error` must be **multiplied** by the scaling factor to get absolute error.
+pub fn simplify_scale<Vertex>(vertices: &[Vertex]) -> f32
+where
+    Vertex: Position,
+{
+    let (_minv, extent) = calc_pos_extents(vertices);
+
+    extent
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -1783,7 +1798,7 @@ mod test {
         let vb1 = vb_from_slice(&[0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]);
         let ib1 = [0, 1, 2, 0, 2, 3, 0, 3, 1, 2, 1, 3];
 
-        assert_eq!(simplify(&mut dst, &ib1, &vb1, 6, 0.001), 12);
+        assert_eq!(simplify(&mut dst, &ib1, &vb1, 6, 0.001, None), 12);
 
         // 5-vertex strip can't be simplified due to topology restriction since middle triangle has flipped winding
         let vb2 = vb_from_slice(&[
@@ -1792,14 +1807,14 @@ mod test {
         let ib2 = [0, 1, 3, 3, 1, 4, 1, 2, 4]; // ok
         let ib3 = [0, 1, 3, 1, 3, 4, 1, 2, 4]; // flipped
 
-        assert_eq!(simplify(&mut dst, &ib2, &vb2, 6, 0.001), 6);
-        assert_eq!(simplify(&mut dst, &ib3, &vb2, 6, 0.001), 9);
+        assert_eq!(simplify(&mut dst, &ib2, &vb2, 6, 0.001, None), 6);
+        assert_eq!(simplify(&mut dst, &ib3, &vb2, 6, 0.001, None), 9);
 
         // 4-vertex quad with a locked corner can't be simplified due to border error-induced restriction
         let vb4 = vb_from_slice(&[0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 1.0, 1.0, 0.0]);
         let ib4 = [0, 1, 3, 0, 3, 2];
 
-        assert_eq!(simplify(&mut dst, &ib4, &vb4, 3, 0.001), 6);
+        assert_eq!(simplify(&mut dst, &ib4, &vb4, 3, 0.001, None), 6);
 
         // 4-vertex quad with a locked corner can't be simplified due to border error-induced restriction
         let vb5 = vb_from_slice(&[
@@ -1807,7 +1822,7 @@ mod test {
         ]);
         let ib5 = [0, 1, 4, 0, 3, 2];
 
-        assert_eq!(simplify(&mut dst, &ib5, &vb5, 3, 0.001), 6);
+        assert_eq!(simplify(&mut dst, &ib5, &vb5, 3, 0.001, None), 6);
     }
 
     #[test]
@@ -1882,7 +1897,14 @@ mod test {
 
         let mut dst = vec![0; ib.len()];
 
-        assert_eq!(simplify(&mut dst, &ib, &vb, 12, 1e-3), expected.len());
+        assert_eq!(simplify(&mut dst, &ib, &vb, 12, 1e-3, None), expected.len());
         assert_eq!(&dst[0..expected.len()], expected);
+    }
+
+    #[test]
+    fn test_simplify_scale() {
+        let vb = vb_from_slice(&[0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 2.0, 0.0, 0.0, 0.0, 3.0]);
+
+        assert_eq!(simplify_scale(&vb), 3.0);
     }
 }
