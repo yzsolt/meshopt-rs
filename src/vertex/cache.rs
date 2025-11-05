@@ -1,8 +1,8 @@
 //! Vertex transform cache analysis and optimization
 
 use crate::{
-    vertex::{build_triangle_adjacency, TriangleAdjacency},
     INVALID_INDEX,
+    vertex::{TriangleAdjacency, build_triangle_adjacency},
 };
 
 #[derive(Default)]
