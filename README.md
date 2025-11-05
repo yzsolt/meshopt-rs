@@ -10,7 +10,7 @@ If you want to use the original C++ implementation from Rust, check out the [mes
 
 ## Features
 
-`meshoptimizer` v0.15 feature level is the current support target. Planned but currently missing features:
+`meshoptimizer` v0.16 feature level is the current support target. Planned but currently missing features:
 - [SIMD support](https://github.com/yzsolt/meshopt-rs/issues/1)
 - [WASM support](https://github.com/yzsolt/meshopt-rs/issues/2)
 
