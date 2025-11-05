@@ -1283,8 +1283,10 @@ fn process(mesh: &Mesh) {
     stripify_mesh(&copystrip, true, 'S');
 
     #[cfg(feature = "experimental")]
-    meshlets(&copy, false);
-    meshlets(&copy, true);
+    {
+        meshlets(&copy, false);
+        meshlets(&copy, true);
+    }
 
     shadow(&copy);
     #[cfg(feature = "experimental")]
@@ -1316,7 +1318,7 @@ fn process(mesh: &Mesh) {
     }
 }
 
-fn process_dev(mesh: &Mesh) {
+fn process_dev(#[allow(unused)] mesh: &Mesh) {
     #[cfg(feature = "experimental")]
     tessellation_adjacency(&mesh);
 }
