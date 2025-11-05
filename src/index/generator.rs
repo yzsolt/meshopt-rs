@@ -1,10 +1,13 @@
 //! Index buffer generation and index/vertex buffer remapping
 
+// This work is based on:
+// John McDonald, Mark Kilgard. Crack-Free Point-Normal Triangles using Adjacent Edge Normals. 2010
+
 use crate::{INVALID_INDEX, Stream};
 
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
-use std::hash::{BuildHasherDefault, Hasher};
+use std::hash::{BuildHasherDefault, Hash, Hasher};
 
 #[derive(Default)]
 struct VertexHasher {
@@ -39,6 +42,49 @@ impl Hasher for VertexHasher {
 }
 
 type BuildVertexHasher = BuildHasherDefault<VertexHasher>;
+
+#[derive(PartialEq, Eq)]
+struct Edge((u32, u32));
+
+impl Hash for Edge {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        const M: u32 = 0x5bd1e995;
+
+        let edge = self.0;
+        let mut h1 = edge.0;
+        let mut h2 = edge.1;
+
+        // MurmurHash64B finalizer
+        h1 ^= h2 >> 18;
+        h1 = h1.wrapping_mul(M);
+        h2 ^= h1 >> 22;
+        h2 = h2.wrapping_mul(M);
+        h1 ^= h2 >> 17;
+        h1 = h1.wrapping_mul(M);
+        h2 ^= h1 >> 19;
+        h2 = h2.wrapping_mul(M);
+
+        state.write_u32(h2);
+    }
+}
+
+#[derive(Default)]
+struct NoopEdgeHasher {
+    state: u32,
+}
+
+impl Hasher for NoopEdgeHasher {
+    fn write(&mut self, bytes: &[u8]) {
+        debug_assert_eq!(bytes.len(), 4);
+        self.state = u32::from_ne_bytes(bytes.try_into().unwrap());
+    }
+
+    fn finish(&self) -> u64 {
+        self.state as u64
+    }
+}
+
+type BuildNoopEdgeHasher = BuildHasherDefault<NoopEdgeHasher>;
 
 fn generate_vertex_remap_inner<Vertex, Lookup>(
     destination: &mut [u32],
@@ -244,4 +290,127 @@ pub fn generate_shadow_index_buffer_multi(destination: &mut [u32], indices: &[u3
         streams,
         index: index as usize,
     })
+}
+
+/// Generate index buffer that can be used for PN-AEN tessellation with crack-free displacement
+///
+/// Each triangle is converted into a 12-vertex patch with the following layout:
+/// - 0, 1, 2: original triangle vertices
+/// - 3, 4: opposing edge for edge 0, 1
+/// - 5, 6: opposing edge for edge 1, 2
+/// - 7, 8: opposing edge for edge 2, 0
+/// - 9, 10, 11: dominant vertices for corners 0, 1, 2
+/// The resulting patch can be rendered with hardware tessellation using PN-AEN and displacement mapping.
+/// See "Tessellation on Any Budget" (John McDonald, GDC 2011) for implementation details.
+///
+/// # Arguments
+///
+/// * `destination`: must contain enough space for the resulting index buffer (`indices.len() * 4` elements)
+#[cfg(feature = "experimental")]
+pub fn generate_tessellation_index_buffer(destination: &mut [u32], indices: &[u32], vertices: &Stream) {
+    assert_eq!(indices.len() % 3, 0);
+    assert!(destination.len() >= indices.len() * 4);
+
+    const NEXT: [usize; 3] = [1, 2, 0];
+
+    let mut table = HashMap::with_capacity_and_hasher(vertices.len(), BuildVertexHasher::default());
+
+    // build position remap: for each vertex, which other (canonical) vertex does it map to?
+    let mut remap = vec![INVALID_INDEX; vertices.len()];
+
+    for index in indices.iter() {
+        remap[*index as usize] = match table.entry(vertices.get(*index as usize)) {
+            Entry::Occupied(entry) => *entry.get(),
+            Entry::Vacant(entry) => {
+                entry.insert(*index);
+                *index
+            }
+        };
+    }
+
+    // build edge set; this stores all triangle edges but we can look these up by any other wedge
+    let mut edge_table = HashMap::with_capacity_and_hasher(indices.len(), BuildNoopEdgeHasher::default());
+
+    for i in indices.chunks_exact(3) {
+        for e in 0..3 {
+            let i0 = i[e];
+            let i1 = i[NEXT[e]];
+            assert!((i0 as usize) < vertices.len() && (i1 as usize) < vertices.len());
+
+            edge_table.insert(Edge((remap[i0 as usize], remap[i1 as usize])), Edge((i0, i1)));
+        }
+    }
+
+    // build resulting index buffer: 12 indices for each input triangle
+    for (t, i) in indices.chunks_exact(3).enumerate() {
+        let mut patch = [0u32; 12];
+
+        for e in 0..3 {
+            let i0 = i[e];
+            let i1 = i[NEXT[e]];
+
+            // note: this refers to the opposite edge!
+            let edge = Edge((i1, i0));
+
+            // use the same edge if opposite edge doesn't exist (border)
+            let oppe = edge_table
+                .get(&Edge((remap[edge.0.0 as usize], remap[edge.0.1 as usize])))
+                .unwrap_or(&edge);
+
+            // triangle index (0, 1, 2)
+            patch[e] = i0;
+
+            // opposite edge (3, 4; 5, 6; 7, 8)
+            patch[3 + e * 2 + 0] = oppe.0.1;
+            patch[3 + e * 2 + 1] = oppe.0.0;
+
+            // dominant vertex (9, 10, 11)
+            patch[9 + e] = remap[i0 as usize];
+        }
+
+        let offset = t * 3 * 4;
+        destination[offset..offset + patch.len()].copy_from_slice(&patch);
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn test_tesselation() {
+        // 0 1/4
+        // 2/5 3
+        const VB: [[f32; 3]; 6] = [
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [1.0, 1.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+        ];
+        const IB: [u32; 6] = [0, 1, 2, 5, 4, 3];
+
+        let mut tessib = [0u32; 24];
+        generate_tessellation_index_buffer(&mut tessib, &IB, &Stream::from_slice(&VB));
+
+        #[rustfmt::skip]
+        let expected = [
+            // patch 0
+            0, 1, 2,
+            0, 1,
+            4, 5,
+            2, 0,
+            0, 1, 2,
+
+            // patch 1
+            5, 4, 3,
+            2, 1,
+            4, 3,
+            3, 5,
+            2, 1, 3,
+        ];
+
+        assert_eq!(tessib, expected);
+    }
 }

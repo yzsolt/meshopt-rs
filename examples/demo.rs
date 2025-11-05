@@ -1227,6 +1227,23 @@ where
     Ok(())
 }
 
+#[cfg(feature = "experimental")]
+fn tessellation(mesh: &Mesh) {
+    let start = Instant::now();
+
+    // 12 indices per input triangle
+    let mut patchib = vec![0u32; mesh.indices.len() * 4];
+    generate_tessellation_index_buffer(&mut patchib, &mesh.indices, &Stream::from_slice(&mesh.vertices));
+
+    let tess = start.elapsed();
+
+    println!(
+        "Tesselltn: {} patches in {:.2} msec",
+        mesh.indices.len() / 3,
+        tess.as_micros() as f64 / 1000.0
+    );
+}
+
 fn process(mesh: &Mesh) {
     optimize(mesh, "Original", |_| {});
     optimize(mesh, "Random", opt_random_shuffle);
@@ -1255,7 +1272,10 @@ fn process(mesh: &Mesh) {
     #[cfg(feature = "experimental")]
     meshlets(&copy, false);
     meshlets(&copy, true);
+
     shadow(&copy);
+    #[cfg(feature = "experimental")]
+    tessellation(&copy);
 
     encode_index(&copy, ' ');
     encode_index(&copystrip, 'S');
@@ -1284,11 +1304,8 @@ fn process(mesh: &Mesh) {
 }
 
 fn process_dev(mesh: &Mesh) {
-    let mut copy = mesh.clone();
-    optimize_vertex_cache(&mut copy.indices, &mesh.indices, mesh.vertices.len());
-
-    meshlets(&copy, false);
-    meshlets(&copy, true);
+    #[cfg(feature = "experimental")]
+    tessellation(&mesh);
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
