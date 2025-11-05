@@ -2,9 +2,15 @@
 
 use crate::quantize::quantize_snorm;
 use crate::util::zero_inverse;
-use crate::vertex::{build_triangle_adjacency, Position, TriangleAdjacency};
+use crate::vertex::{Position, TriangleAdjacency, build_triangle_adjacency};
 
 const UNUSED: u8 = 0xff;
+
+/// This must be <= 255 since index 0xff is used internally to indice a vertex that doesn't belong to a meshlet
+const MESHLET_MAX_VERTICES: usize = 255;
+
+/// A reasonable limit is around 2 * `MESHLET_MAX_VERTICES` or less
+const MESHLET_MAX_TRIANGLES: usize = 512;
 
 /// Bounds returned by `compute_cluster/meshlet_bounds`.
 ///
@@ -32,28 +38,15 @@ pub struct Bounds {
     pub cone_cutoff_s8: i8,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct Meshlet {
-    pub vertices: [i32; 64],
-    pub indices: [[u8; 3]; 126],
-    pub triangle_count: u8,
-    pub vertex_count: u8,
-}
+    /* offsets within meshlet_vertices and meshlet_triangles arrays with meshlet data */
+    pub vertex_offset: u32,
+    pub triangle_offset: u32,
 
-impl Meshlet {
-    pub const VERTICES_COUNT: usize = 64;
-    pub const TRIANGLES_COUNT: usize = 126;
-}
-
-impl Default for Meshlet {
-    fn default() -> Self {
-        Meshlet {
-            vertices: [0; Self::VERTICES_COUNT],
-            indices: [Default::default(); Self::TRIANGLES_COUNT],
-            triangle_count: Default::default(),
-            vertex_count: Default::default(),
-        }
-    }
+    /* number of vertices and triangles used in the meshlet; data is stored in consecutive range defined by offset and count */
+    pub vertex_count: u32,
+    pub triangle_count: u32,
 }
 
 fn compute_bounding_sphere(points: &[[f32; 3]]) -> [f32; 4] {
@@ -211,60 +204,81 @@ where
     mesh_area
 }
 
+fn finish_meshlet(meshlet: &Meshlet, meshlet_triangles: &mut [u8]) {
+    let mut offset = meshlet.triangle_offset + meshlet.triangle_count * 3;
+
+    // fill 4b padding with 0
+    while (offset & 3) != 0 {
+        meshlet_triangles[offset as usize] = 0;
+        offset += 1;
+    }
+}
+
 fn append_meshlet(
     meshlet: &mut Meshlet,
     a: u32,
     b: u32,
     c: u32,
     used: &mut [u8],
-    destination: &mut [Meshlet],
-    offset: usize,
+    meshlets: &mut [Meshlet],
+    meshlet_vertices: &mut [u32],
+    meshlet_triangles: &mut [u8],
+    meshlet_offset: usize,
     max_vertices: usize,
     max_triangles: usize,
 ) -> bool {
-    let mut av = used[a as usize];
-    let mut bv = used[b as usize];
-    let mut cv = used[c as usize];
+    let av = used[a as usize];
+    let bv = used[b as usize];
+    let cv = used[c as usize];
 
     let used_extra = [av, bv, cv].iter().filter(|v| **v == UNUSED).count();
 
     let mut result = false;
 
     if meshlet.vertex_count as usize + used_extra > max_vertices || meshlet.triangle_count as usize >= max_triangles {
-        destination[offset] = meshlet.clone();
+        meshlets[meshlet_offset] = meshlet.clone();
 
         for j in 0..meshlet.vertex_count {
-            used[meshlet.vertices[j as usize] as usize] = UNUSED;
+            used[meshlet_vertices[meshlet.vertex_offset as usize + j as usize] as usize] = UNUSED;
         }
 
-        *meshlet = Meshlet::default();
+        finish_meshlet(meshlet, meshlet_triangles);
+
+        meshlet.vertex_offset += meshlet.vertex_count;
+        meshlet.triangle_offset += (meshlet.triangle_count * 3 + 3) & !3; // 4b padding
+        meshlet.vertex_count = 0;
+        meshlet.triangle_count = 0;
 
         result = true;
     }
 
+    let mut av = used[a as usize];
+    let mut bv = used[b as usize];
+    let mut cv = used[c as usize];
+
     if av == UNUSED {
-        av = meshlet.vertex_count;
+        av = meshlet.vertex_count as u8;
         used[a as usize] = av;
-        meshlet.vertices[meshlet.vertex_count as usize] = a.try_into().unwrap();
+        meshlet_vertices[(meshlet.vertex_offset + meshlet.vertex_count) as usize] = a.try_into().unwrap();
         meshlet.vertex_count += 1;
     }
 
     if bv == UNUSED {
-        bv = meshlet.vertex_count;
+        bv = meshlet.vertex_count as u8;
         used[b as usize] = bv;
-        meshlet.vertices[meshlet.vertex_count as usize] = b.try_into().unwrap();
+        meshlet_vertices[(meshlet.vertex_offset + meshlet.vertex_count) as usize] = b.try_into().unwrap();
         meshlet.vertex_count += 1;
     }
 
     if cv == UNUSED {
-        cv = meshlet.vertex_count;
+        cv = meshlet.vertex_count as u8;
         used[c as usize] = cv;
-        meshlet.vertices[meshlet.vertex_count as usize] = c.try_into().unwrap();
+        meshlet_vertices[(meshlet.vertex_offset + meshlet.vertex_count) as usize] = c.try_into().unwrap();
         meshlet.vertex_count += 1;
     }
 
-    meshlet.indices[meshlet.triangle_count as usize][..].copy_from_slice(&[av, bv, cv]);
-
+    let offset = (meshlet.triangle_offset + meshlet.triangle_count * 3) as usize;
+    meshlet_triangles[offset..offset + 3].copy_from_slice(&[av, bv, cv]);
     meshlet.triangle_count += 1;
 
     result
@@ -370,11 +384,7 @@ where
     let axis: u32 = if vars[0] >= vars[1] && vars[0] >= vars[2] {
         0
     } else {
-        if vars[1] >= vars[2] {
-            1
-        } else {
-            2
-        }
+        if vars[1] >= vars[2] { 1 } else { 2 }
     };
 
     let split = mean[axis as usize];
@@ -462,8 +472,9 @@ fn kd_tree_nearest<Point>(
 /// Returns worst case size requirement for [build_meshlets].
 pub fn build_meshlets_bound(index_count: usize, max_vertices: usize, max_triangles: usize) -> usize {
     assert!(index_count % 3 == 0);
-    assert!(max_vertices >= 3);
-    assert!(max_triangles >= 1);
+    assert!(max_vertices >= 3 && max_vertices <= MESHLET_MAX_VERTICES);
+    assert!(max_triangles >= 1 && max_triangles <= MESHLET_MAX_TRIANGLES);
+    assert!(max_triangles % 4 == 0); // ensures the caller will compute output space properly as index data is 4b aligned
 
     // meshlet construction is limited by max vertices and max triangles per meshlet
     // the worst case is that the input is an unindexed stream since this equally stresses both limits
@@ -486,54 +497,59 @@ pub fn build_meshlets_bound(index_count: usize, max_vertices: usize, max_triangl
 ///
 /// # Arguments
 ///
-/// * `destination`: must contain enough space for all meshlets, worst case size can be computed with [build_meshlets_bound]
-/// * `max_vertices` and `max_triangles`: can't exceed limits statically declared in [Meshlet] (`VERTICES_COUNT` and `TRIANGLES_COUNT`)
+/// * `meshlets`: must contain enough space for all meshlets, worst case size can be computed with [build_meshlets_bound]
+/// * `meshlet_vertices`: must contain enough space for all meshlets, worst case size is equal to `max_meshlets` * `max_vertices`
+/// * `meshlet_triangles`: must contain enough space for all meshlets, worst case size is equal to `max_meshlets` * `max_triangles * 3`
+/// * `max_vertices` and `max_triangles`: must not exceed implementation limits (`max_vertices` <= 255 - not 256!, `max_triangles` <= 512)
 pub fn build_meshlets_scan(
-    destination: &mut [Meshlet],
+    meshlets: &mut [Meshlet],
+    meshlet_vertices: &mut [u32],
+    meshlet_triangles: &mut [u8],
     indices: &[u32],
     vertex_count: usize,
     max_vertices: usize,
     max_triangles: usize,
 ) -> usize {
     assert!(indices.len() % 3 == 0);
-    assert!(max_vertices >= 3);
-    assert!(max_triangles >= 1);
-
-    let mut meshlet = Meshlet::default();
-
-    assert!(max_vertices <= Meshlet::VERTICES_COUNT);
-    assert!(max_triangles <= Meshlet::TRIANGLES_COUNT);
+    assert!(max_vertices >= 3 && max_vertices <= MESHLET_MAX_VERTICES);
+    assert!(max_triangles >= 1 && max_triangles <= MESHLET_MAX_TRIANGLES);
+    assert!(max_triangles % 4 == 0); // ensures the caller will compute output space properly as index data is 4b aligned
 
     // index of the vertex in the meshlet, `UNUSED` if the vertex isn't used
     let mut used = vec![UNUSED; vertex_count];
 
-    let mut offset = 0;
+    let mut meshlet = Meshlet::default();
+    let mut meshlet_offset = 0;
 
     for abc in indices.chunks_exact(3) {
         let (a, b, c) = (abc[0], abc[1], abc[2]);
 
         // appends triangle to the meshlet and writes previous meshlet to the output if full
-        offset += append_meshlet(
+        meshlet_offset += append_meshlet(
             &mut meshlet,
             a,
             b,
             c,
             &mut used,
-            destination,
-            offset,
+            meshlets,
+            meshlet_vertices,
+            meshlet_triangles,
+            meshlet_offset,
             max_vertices,
             max_triangles,
         ) as usize;
     }
 
     if meshlet.triangle_count > 0 {
-        destination[offset] = meshlet;
-        offset += 1;
+        finish_meshlet(&meshlet, meshlet_triangles);
+
+        meshlets[meshlet_offset] = meshlet;
+        meshlet_offset += 1;
     }
 
-    assert!(offset <= build_meshlets_bound(indices.len(), max_vertices, max_triangles));
+    assert!(meshlet_offset <= build_meshlets_bound(indices.len(), max_vertices, max_triangles));
 
-    offset
+    meshlet_offset
 }
 
 /// Splits the mesh into a set of meshlets where each meshlet has a micro index buffer indexing into meshlet vertices that refer to the original vertex buffer.
@@ -543,11 +559,15 @@ pub fn build_meshlets_scan(
 ///
 /// # Arguments
 ///
-/// * `destination`: must contain enough space for all meshlets, worst case size can be computed with [build_meshlets_bound]
-/// * `max_vertices` and `max_triangles`: can't exceed limits statically declared in [Meshlet] (`VERTICES_COUNT` and `TRIANGLES_COUNT`)
+/// * `meshlets`: must contain enough space for all meshlets, worst case size can be computed with [build_meshlets_bound]
+/// * `meshlet_vertices`: must contain enough space for all meshlets, worst case size is equal to `max_meshlets` * `max_vertices`
+/// * `meshlet_triangles`: must contain enough space for all meshlets, worst case size is equal to `max_meshlets` * `max_triangles * 3`
+/// * `max_vertices` and `max_triangles`: must not exceed implementation limits (`max_vertices` <= 255 - not 256!, `max_triangles` <= 512)
 /// * `cone_weight`: should be set to 0 when cone culling is not used, and a value between 0 and 1 otherwise to balance between cluster size and cone culling efficiency
 pub fn build_meshlets<Vertex>(
-    destination: &mut [Meshlet],
+    meshlets: &mut [Meshlet],
+    meshlet_vertices: &mut [u32],
+    meshlet_triangles: &mut [u8],
     indices: &[u32],
     vertices: &[Vertex],
     max_vertices: usize,
@@ -558,13 +578,10 @@ where
     Vertex: Position,
 {
     assert!(indices.len() % 3 == 0);
-    assert!(max_vertices >= 3);
-    assert!(max_triangles >= 1);
 
-    let mut meshlet = Meshlet::default();
-
-    assert!(max_vertices <= Meshlet::VERTICES_COUNT);
-    assert!(max_triangles <= Meshlet::TRIANGLES_COUNT);
+    assert!(max_vertices >= 3 && max_vertices <= MESHLET_MAX_VERTICES);
+    assert!(max_triangles >= 1 && max_triangles <= max_triangles);
+    assert!(max_triangles % 4 == 0); // ensures the caller will compute output space properly as index data is 4b aligned
 
     let mut adjacency = TriangleAdjacency::default();
     build_triangle_adjacency(&mut adjacency, indices, vertices.len());
@@ -599,7 +616,8 @@ where
     // index of the vertex in the meshlet, `UNUSED` if the vertex isn't used
     let mut used = vec![UNUSED; vertices.len()];
 
-    let mut offset = 0;
+    let mut meshlet = Meshlet::default();
+    let mut meshlet_offset = 0;
 
     let mut meshlet_cone_acc = Cone::default();
 
@@ -611,7 +629,7 @@ where
         let meshlet_cone = get_meshlet_cone(&meshlet_cone_acc, meshlet.triangle_count as u32);
 
         for i in 0..meshlet.vertex_count {
-            let index = meshlet.vertices[i as usize] as usize;
+            let index = meshlet_vertices[meshlet.vertex_offset as usize + i as usize] as usize;
 
             let neighbours_size = adjacency.counts[index] as usize;
             let neighbouts_offset = adjacency.offsets[index] as usize;
@@ -643,7 +661,7 @@ where
                     continue;
                 }
 
-                let tri_cone = triangles[triangle].clone();
+                let tri_cone = &triangles[triangle];
 
                 let distance2 = (tri_cone.px - meshlet_cone.px) * (tri_cone.px - meshlet_cone.px)
                     + (tri_cone.py - meshlet_cone.py) * (tri_cone.py - meshlet_cone.py)
@@ -687,12 +705,14 @@ where
                 b,
                 c,
                 &mut used,
-                destination,
-                offset,
+                meshlets,
+                meshlet_vertices,
+                meshlet_triangles,
+                meshlet_offset,
                 max_vertices,
                 max_triangles,
             ) {
-                offset += 1;
+                meshlet_offset += 1;
                 meshlet_cone_acc = Cone::default();
             }
 
@@ -735,13 +755,15 @@ where
     }
 
     if meshlet.triangle_count > 0 {
-        destination[offset] = meshlet;
-        offset += 1;
+        finish_meshlet(&meshlet, meshlet_triangles);
+
+        meshlets[meshlet_offset] = meshlet;
+        meshlet_offset += 1;
     }
 
-    assert!(offset <= build_meshlets_bound(indices.len(), max_vertices, max_triangles));
+    assert!(meshlet_offset <= build_meshlets_bound(indices.len(), max_vertices, max_triangles));
 
-    offset
+    meshlet_offset
 }
 
 /// Creates bounding volumes that can be used for frustum, backface and occlusion culling.
@@ -776,11 +798,11 @@ where
     Vertex: Position,
 {
     assert!(indices.len() % 3 == 0);
-    assert!(indices.len() / 3 <= 256);
+    assert!(indices.len() / 3 <= MESHLET_MAX_TRIANGLES);
 
     // compute triangle normals and gather triangle corners
-    let mut normals: [[f32; 3]; 256] = [Default::default(); 256];
-    let mut corners: [[[f32; 3]; 3]; 256] = [Default::default(); 256];
+    let mut normals: [[f32; 3]; MESHLET_MAX_TRIANGLES] = [Default::default(); MESHLET_MAX_TRIANGLES];
+    let mut corners: [[[f32; 3]; 3]; MESHLET_MAX_TRIANGLES] = [Default::default(); MESHLET_MAX_TRIANGLES];
     let mut triangles = 0;
 
     let vertex_count = vertices.len();
@@ -930,25 +952,25 @@ where
 /// Creates bounding volumes that can be used for frustum, backface and occlusion culling.
 ///
 /// Same as [compute_cluster_bounds] but with meshlets as input.
-pub fn compute_meshlet_bounds<Vertex>(meshlet: &Meshlet, vertices: &[Vertex]) -> Bounds
+pub fn compute_meshlet_bounds<Vertex>(meshlet_vertices: &[u32], meshlet_triangles: &[u8], vertices: &[Vertex]) -> Bounds
 where
     Vertex: Position,
 {
-    let mut indices = [0; Meshlet::TRIANGLES_COUNT * 3];
+    assert_eq!(meshlet_triangles.len() % 3, 0);
 
-    for i in 0..meshlet.triangle_count as usize {
-        let triangle = meshlet.indices[i];
+    let triangle_count = meshlet_triangles.len() / 3;
+    assert!(triangle_count <= MESHLET_MAX_TRIANGLES);
 
-        let a = meshlet.vertices[triangle[0] as usize] as u32;
-        let b = meshlet.vertices[triangle[1] as usize] as u32;
-        let c = meshlet.vertices[triangle[2] as usize] as u32;
+    let mut indices = [0u32; MESHLET_MAX_TRIANGLES * 3];
 
-        // note: `compute_cluster_bounds` checks later if a/b/c are in range, no need to do it here
+    for (i, index) in meshlet_triangles.iter().enumerate() {
+        let index = meshlet_vertices[*index as usize];
+        assert!((index as usize) < vertices.len());
 
-        indices[i * 3..i * 3 + 3].copy_from_slice(&[a, b, c]);
+        indices[i] = index;
     }
 
-    compute_cluster_bounds(&indices[0..meshlet.triangle_count as usize * 3], vertices)
+    compute_cluster_bounds(&indices[0..meshlet_triangles.len()], vertices)
 }
 
 #[cfg(test)]

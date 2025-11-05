@@ -893,16 +893,21 @@ fn shadow(mesh: &Mesh) {
 #[cfg(feature = "experimental")]
 fn meshlets(mesh: &Mesh, scan: bool) {
     const MAX_VERTICES: usize = 64;
-    const MAX_TRIANGLES: usize = 126;
+    const MAX_TRIANGLES: usize = 124; // NVidia-recommended 126, rounded down to a multiple of 4
     const CONE_WEIGHT: f32 = 0.5; // note: should be set to 0 unless cone culling is used at runtime!
 
     // note: input mesh is assumed to be optimized for vertex cache and vertex fetch
     let start = Instant::now();
-    let mut meshlets = vec![Meshlet::default(); build_meshlets_bound(mesh.indices.len(), MAX_VERTICES, MAX_TRIANGLES)];
+    let max_meshlets = build_meshlets_bound(mesh.indices.len(), MAX_VERTICES, MAX_TRIANGLES);
+    let mut meshlets = vec![Meshlet::default(); max_meshlets];
+    let mut meshlet_vertices = vec![0u32; max_meshlets * MAX_VERTICES];
+    let mut meshlet_triangles = vec![0u8; max_meshlets * MAX_TRIANGLES * 3];
 
     let size = if scan {
         build_meshlets_scan(
             &mut meshlets,
+            &mut meshlet_vertices,
+            &mut meshlet_triangles,
             &mesh.indices,
             mesh.vertices.len(),
             MAX_VERTICES,
@@ -911,6 +916,8 @@ fn meshlets(mesh: &Mesh, scan: bool) {
     } else {
         build_meshlets(
             &mut meshlets,
+            &mut meshlet_vertices,
+            &mut meshlet_triangles,
             &mesh.indices,
             &mesh.vertices,
             MAX_VERTICES,
@@ -919,7 +926,16 @@ fn meshlets(mesh: &Mesh, scan: bool) {
         )
     };
 
-    meshlets.resize(size, Meshlet::default());
+    meshlets.truncate(size);
+
+    if !meshlets.is_empty() {
+        let last = meshlets.last().unwrap();
+
+        // this is an example of how to trim the vertex/triangle arrays when copying data out to GPU storage
+        meshlet_vertices.truncate((last.vertex_offset + last.vertex_count) as usize);
+        meshlet_triangles.truncate((last.triangle_offset + ((last.triangle_count * 3 + 3) & !3)) as usize);
+    }
+
     let duration = start.elapsed();
 
     let mut vertices = 0;
@@ -951,13 +967,17 @@ fn meshlets(mesh: &Mesh, scan: bool) {
     let mut accepted = 0;
     let mut accepted_s8 = 0;
 
-    let mut radii = vec![0f32; meshlets.len()];
+    let mut radii = vec![0f64; meshlets.len()];
 
     let start = Instant::now();
-    for (i, meshlet) in meshlets.iter().enumerate() {
-        let bounds = compute_meshlet_bounds(&meshlet, &mesh.vertices);
+    for (m, radius) in meshlets.iter().zip(radii.iter_mut()) {
+        let bounds = compute_meshlet_bounds(
+            &meshlet_vertices[m.vertex_offset as usize..],
+            &meshlet_triangles[m.triangle_offset as usize..(m.triangle_offset + m.triangle_count * 3) as usize],
+            &mesh.vertices,
+        );
 
-        radii[i] = bounds.radius;
+        *radius = bounds.radius as f64;
 
         // trivial accept: we can't ever backface cull this meshlet
         accepted += (bounds.cone_cutoff >= 1.0) as usize;
@@ -998,14 +1018,14 @@ fn meshlets(mesh: &Mesh, scan: bool) {
     }
     let duration = start.elapsed();
 
-    let radius_mean: f32 = radii.iter().sum::<f32>() / radii.len() as f32;
-    let radius_variance: f32 =
-        radii.iter().map(|r| (r - radius_mean) * (r - radius_mean)).sum::<f32>() / (radii.len() - 1) as f32;
+    let radius_mean: f64 = radii.iter().sum::<f64>() / radii.len() as f64;
+    let radius_variance: f64 =
+        radii.iter().map(|r| (r - radius_mean) * (r - radius_mean)).sum::<f64>() / (radii.len() - 1) as f64;
     let radius_stddev = radius_variance.sqrt();
     let meshlets_std: usize = radii.iter().map(|r| (*r < radius_mean + radius_stddev) as usize).sum();
 
     println!(
-        "BoundDist: mean {} stddev {}; {:.1}% meshlets are under mean+stddev",
+        "BoundDist: mean {:.6} stddev {:.6}; {:.1}% meshlets are under mean+stddev",
         radius_mean,
         radius_stddev,
         meshlets_std as f64 / meshlets.len() as f64 * 100.0
