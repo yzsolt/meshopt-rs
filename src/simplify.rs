@@ -9,24 +9,39 @@ use std::collections::{HashMap, hash_map::Entry};
 use std::fmt::Debug;
 use std::ops::AddAssign;
 
+#[derive(Clone, Default)]
+struct Edge {
+    next: u32,
+    prev: u32,
+}
+
 #[derive(Default)]
 struct EdgeAdjacency {
     counts: Vec<u32>,
     offsets: Vec<u32>,
-    data: Vec<u32>,
+    data: Vec<Edge>,
 }
 
-fn build_edge_adjacency(adjacency: &mut EdgeAdjacency, indices: &[u32], vertex_count: usize) {
-    let face_count = indices.len() / 3;
-
-    // allocate arrays
+fn prepare_edge_adjacency(adjacency: &mut EdgeAdjacency, index_count: usize, vertex_count: usize) {
     adjacency.counts = vec![0; vertex_count];
     adjacency.offsets = vec![0; vertex_count];
-    adjacency.data = vec![0; indices.len()];
+    adjacency.data = vec![Edge::default(); index_count];
+}
+
+fn update_edge_adjacency(adjacency: &mut EdgeAdjacency, indices: &[u32], remap: Option<&[u32]>) {
+    let face_count = indices.len() / 3;
 
     // fill edge counts
+    adjacency.counts.fill(0);
+
     for index in indices {
-        adjacency.counts[*index as usize] += 1;
+        let v = if let Some(r) = remap {
+            r[*index as usize] as usize
+        } else {
+            *index as usize
+        };
+
+        adjacency.counts[v] += 1;
     }
 
     // fill offset table
@@ -41,17 +56,27 @@ fn build_edge_adjacency(adjacency: &mut EdgeAdjacency, indices: &[u32], vertex_c
 
     // fill edge data
     for i in 0..face_count {
-        let a = indices[i * 3 + 0] as usize;
-        let b = indices[i * 3 + 1] as usize;
-        let c = indices[i * 3 + 2] as usize;
+        let mut a = indices[i * 3 + 0];
+        let mut b = indices[i * 3 + 1];
+        let mut c = indices[i * 3 + 2];
 
-        adjacency.data[adjacency.offsets[a] as usize] = b as u32;
-        adjacency.data[adjacency.offsets[b] as usize] = c as u32;
-        adjacency.data[adjacency.offsets[c] as usize] = a as u32;
+        if let Some(r) = remap {
+            a = r[a as usize];
+            b = r[b as usize];
+            c = r[c as usize];
+        }
 
-        adjacency.offsets[a] += 1;
-        adjacency.offsets[b] += 1;
-        adjacency.offsets[c] += 1;
+        adjacency.data[adjacency.offsets[a as usize] as usize].next = b;
+        adjacency.data[adjacency.offsets[a as usize] as usize].prev = c;
+        adjacency.offsets[a as usize] += 1;
+
+        adjacency.data[adjacency.offsets[b as usize] as usize].next = c;
+        adjacency.data[adjacency.offsets[b as usize] as usize].prev = a;
+        adjacency.offsets[b as usize] += 1;
+
+        adjacency.data[adjacency.offsets[c as usize] as usize].next = a;
+        adjacency.data[adjacency.offsets[c as usize] as usize].prev = b;
+        adjacency.offsets[c as usize] += 1;
     }
 
     // fix offsets that have been disturbed by the previous pass
@@ -229,7 +254,9 @@ fn has_edge(adjacency: &EdgeAdjacency, a: u32, b: u32) -> bool {
     let count = adjacency.counts[a as usize] as usize;
     let offset = adjacency.offsets[a as usize] as usize;
 
-    adjacency.data[offset..offset + count].iter().any(|d| *d == b)
+    let edges = &adjacency.data[offset..offset + count];
+
+    edges.iter().any(|d| d.next == b)
 }
 
 fn classify_vertices(
@@ -251,17 +278,19 @@ fn classify_vertices(
         let offset = adjacency.offsets[vertex] as usize;
         let count = adjacency.counts[vertex] as usize;
 
-        let data = &adjacency.data[offset..offset + count];
+        let edges = &adjacency.data[offset..offset + count];
 
-        for target in data {
-            if !has_edge(adjacency, *target, vertex as u32) {
-                openinc[*target as usize] = if openinc[*target as usize] == INVALID_INDEX {
+        for edge in edges {
+            let target = edge.next;
+
+            if !has_edge(adjacency, target, vertex as u32) {
+                openinc[target as usize] = if openinc[target as usize] == INVALID_INDEX {
                     vertex as u32
                 } else {
-                    *target
+                    target
                 };
                 openout[vertex] = if openout[vertex] == INVALID_INDEX {
-                    *target
+                    target
                 } else {
                     vertex as u32
                 };
@@ -270,7 +299,7 @@ fn classify_vertices(
     }
 
     #[cfg(feature = "trace")]
-    let mut locked_stats = [0usize; 4];
+    let mut stats = [0usize; 4];
 
     for i in 0..vertex_count {
         if remap[i] == i as u32 {
@@ -291,7 +320,7 @@ fn classify_vertices(
 
                     #[cfg(feature = "trace")]
                     {
-                        locked_stats[0] += 1;
+                        stats[0] += 1;
                     }
                 }
             } else if wedge[wedge[i] as usize] == i as u32 {
@@ -319,7 +348,7 @@ fn classify_vertices(
 
                         #[cfg(feature = "trace")]
                         {
-                            locked_stats[1] += 1;
+                            stats[1] += 1;
                         }
                     }
                 } else {
@@ -327,7 +356,7 @@ fn classify_vertices(
 
                     #[cfg(feature = "trace")]
                     {
-                        locked_stats[2] += 1;
+                        stats[2] += 1;
                     }
                 }
             } else {
@@ -336,7 +365,7 @@ fn classify_vertices(
 
                 #[cfg(feature = "trace")]
                 {
-                    locked_stats[3] += 1;
+                    stats[3] += 1;
                 }
             }
         } else {
@@ -349,11 +378,11 @@ fn classify_vertices(
     #[cfg(feature = "trace")]
     println!(
         "locked: many open edges {}, disconnected seam {}, many seam edges {}, many wedges {}",
-        locked_stats[0], locked_stats[1], locked_stats[2], locked_stats[3]
+        stats[0], stats[1], stats[2], stats[3]
     );
 }
 
-fn rescale_positions<Vertex>(result: &mut [Vector3], vertices: &[Vertex])
+fn rescale_positions<Vertex>(result: &mut [Vector3], vertices: &[Vertex]) -> f32
 where
     Vertex: Position,
 {
@@ -376,6 +405,8 @@ where
         pos.y = (pos.y - minv[1]) * scale;
         pos.z = (pos.z - minv[2]) * scale;
     }
+
+    extent
 }
 
 union CollapseUnion {
@@ -626,6 +657,62 @@ fn fill_edge_quadrics(
     }
 }
 
+// does triangle ABC flip when C is replaced with D?
+fn has_triangle_flip(a: &Vector3, b: &Vector3, c: &Vector3, d: &Vector3) -> bool {
+    let eb = Vector3::new(b.x - a.x, b.y - a.y, b.z - a.z);
+    let ec = Vector3::new(c.x - a.x, c.y - a.y, c.z - a.z);
+    let ed = Vector3::new(d.x - a.x, d.y - a.y, d.z - a.z);
+
+    let nbc = Vector3::new(
+        eb.y * ec.z - eb.z * ec.y,
+        eb.z * ec.x - eb.x * ec.z,
+        eb.x * ec.y - eb.y * ec.x,
+    );
+    let nbd = Vector3::new(
+        eb.y * ed.z - eb.z * ed.y,
+        eb.z * ed.x - eb.x * ed.z,
+        eb.x * ed.y - eb.y * ed.x,
+    );
+
+    nbc.x * nbd.x + nbc.y * nbd.y + nbc.z * nbd.z < 0.0
+}
+
+fn has_triangle_flips(
+    adjacency: &EdgeAdjacency,
+    vertex_positions: &[Vector3],
+    collapse_remap: &[u32],
+    i0: usize,
+    i1: usize,
+) -> bool {
+    assert_eq!(collapse_remap[i0] as usize, i0);
+    assert_eq!(collapse_remap[i1] as usize, i1);
+
+    let v0 = vertex_positions[i0];
+    let v1 = vertex_positions[i1];
+
+    let offset = adjacency.offsets[i0] as usize;
+    let count = adjacency.counts[i0] as usize;
+    let edges = &adjacency.data[offset..offset + count];
+
+    for edge in edges {
+        let a = collapse_remap[edge.next as usize] as usize;
+        let b = collapse_remap[edge.prev as usize] as usize;
+
+        // skip triangles that get collapsed
+        // note: this is mathematically redundant as if either of these is true, the dot product in has_triangle_flip should be 0
+        if a == i1 || b == i1 {
+            continue;
+        }
+
+        // early-out when at least one triangle flips due to a collapse
+        if has_triangle_flip(&vertex_positions[a], &vertex_positions[b], &v0, &v1) {
+            return true;
+        }
+    }
+
+    false
+}
+
 fn pick_edge_collapses(
     collapses: &mut [Collapse],
     indices: &[u32],
@@ -747,7 +834,12 @@ fn dump_edge_collapses(collapses: &[Collapse], vertex_kind: &[VertexKind]) {
             if ckinds[k0][k1] != 0 {
                 println!(
                     "collapses {k0} -> {k1}: {}, min error {:e}",
-                    ckinds[k0][k1], cerrors[k0][k1]
+                    ckinds[k0][k1],
+                    if ckinds[k0][k1] != 0 {
+                        cerrors[k0][k1].sqrt()
+                    } else {
+                        0.0
+                    }
                 );
             }
         }
@@ -824,12 +916,18 @@ fn perform_edge_collapses(
     remap: &[u32],
     wedge: &[u32],
     vertex_kind: &[VertexKind],
+    vertex_positions: &[Vector3],
+    adjacency: &EdgeAdjacency,
     triangle_collapse_goal: usize,
-    error_goal: f32,
     error_limit: f32,
+    result_error: &mut f32,
 ) -> usize {
     let mut edge_collapses = 0;
     let mut triangle_collapses = 0;
+
+    // most collapses remove 2 triangles; use this to establish a bound on the pass in terms of error limit
+    // note that edge_collapse_goal is an estimate; triangle_collapse_goal will be used to actually limit collapses
+    let mut edge_collapse_goal = triangle_collapse_goal / 2;
 
     for order in collapse_order {
         let c = collapses[*order as usize].clone();
@@ -840,11 +938,21 @@ fn perform_edge_collapses(
             break;
         }
 
-        if error > error_goal && triangle_collapses > triangle_collapse_goal / 10 {
+        if triangle_collapses >= triangle_collapse_goal {
             break;
         }
 
-        if triangle_collapses >= triangle_collapse_goal {
+        // we limit the error in each pass based on the error of optimal last collapse; since many collapses will be locked
+        // as they will share vertices with other successfull collapses, we need to increase the acceptable error by some factor
+        let error_goal = if edge_collapse_goal < collapses.len() {
+            1.5 * unsafe { collapses[collapse_order[edge_collapse_goal as usize] as usize].u.error }
+        } else {
+            f32::MAX
+        };
+
+        // on average, each collapse is expected to lock 6 other collapses; to avoid degenerate passes on meshes with odd
+        // topology, we only abort if we got over 1/6 collapses accordingly.
+        if unsafe { c.u.error } > error_goal && triangle_collapses > triangle_collapse_goal / 6 {
             break;
         }
 
@@ -858,6 +966,12 @@ fn perform_edge_collapses(
         // it's important to not move the vertices twice since it complicates the tracking/remapping logic
         // it's important to not move other vertices towards a moved vertex to preserve error since we don't re-rank collapses mid-pass
         if collapse_locked[r0] || collapse_locked[r1] {
+            continue;
+        }
+
+        if has_triangle_flips(adjacency, vertex_positions, collapse_remap, r0, r1) {
+            // adjust collapse goal since this collapse is invalid and shouldn't factor into error goal
+            edge_collapse_goal += 1;
             continue;
         }
 
@@ -903,6 +1017,8 @@ fn perform_edge_collapses(
         // border edges collapse 1 triangle, other edges collapse 2 or more
         triangle_collapses += if vertex_kind[i0] == VertexKind::Border { 1 } else { 2 };
         edge_collapses += 1;
+
+        *result_error = result_error.max(unsafe { c.u.error });
     }
 
     edge_collapses
@@ -1135,13 +1251,16 @@ fn interpolate(y: f32, x0: f32, y0: f32, x1: f32, y1: f32, x2: f32, y2: f32) -> 
 ///
 /// # Arguments
 ///
-/// * `destination`: must contain enough space for the **source** index buffer (since optimization is iterative, this means `indices.len()` elements - **not** `target_index_count`!)
+/// * `destination`: must contain enough space for the target index buffer, worst case is `indices.len()` elements (**not** `target_index_count`)!
+/// * `target_error`: represents the error relative to mesh extents that can be tolerated, e.g. 0.01 = 1% deformation
+/// * `result_error`: can be None; when it's not None, it will contain the resulting (relative) error after simplification
 pub fn simplify<Vertex>(
     destination: &mut [u32],
     indices: &[u32],
     vertices: &[Vertex],
     target_index_count: usize,
     target_error: f32,
+    result_error: Option<&mut f32>,
 ) -> usize
 where
     Vertex: Position,
@@ -1153,7 +1272,8 @@ where
 
     // build adjacency information
     let mut adjacency = EdgeAdjacency::default();
-    build_edge_adjacency(&mut adjacency, indices, vertices.len());
+    prepare_edge_adjacency(&mut adjacency, indices.len(), vertices.len());
+    update_edge_adjacency(&mut adjacency, indices, None);
 
     // build position remap that maps each vertex to the one with identical position
     let mut remap = vec![0u32; vertices.len()];
@@ -1222,20 +1342,21 @@ where
     let mut edge_collapses = vec![Collapse::default(); indices.len()];
     let mut collapse_order = vec![0u32; indices.len()];
     let mut collapse_remap = vec![0u32; vertices.len()];
-
     let mut collapse_locked = vec![false; vertices.len()];
 
     let mut result_count = indices.len();
+    let mut result_error_max = 0.0;
 
     // `target_error` input is linear; we need to adjust it to match `Quadric::error` units
     let error_limit = target_error * target_error;
 
     #[cfg(feature = "trace")]
     let mut pass_count = 0;
-    #[cfg(feature = "trace")]
-    let mut worst_error = 0.0;
 
     while result_count > target_index_count {
+        // note: throughout the simplification process adjacency structure reflects welded topology for result-in-progress
+        update_edge_adjacency(&mut adjacency, &result[0..result_count], Some(&remap));
+
         let edge_collapse_count = pick_edge_collapses(
             &mut edge_collapses,
             &result[0..result_count],
@@ -1261,26 +1382,19 @@ where
 
         sort_edge_collapses(&mut collapse_order, &edge_collapses[0..edge_collapse_count]);
 
-        // most collapses remove 2 triangles; use this to establish a bound on the pass in terms of error limit
-        // note that edge_collapse_goal is an estimate; triangle_collapse_goal will be used to actually limit collapses
         let triangle_collapse_goal = (result_count - target_index_count) / 3;
-        let edge_collapse_goal = triangle_collapse_goal / 2;
-
-        // we limit the error in each pass based on the error of optimal last collapse; since many collapses will be locked
-        // as they will share vertices with other successfull collapses, we need to increase the acceptable error by this factor
-        const PASS_ERROR_BOUND: f32 = 1.5;
-
-        let error_goal = if edge_collapse_goal < edge_collapse_count {
-            unsafe { edge_collapses[collapse_order[edge_collapse_goal] as usize].u.error * PASS_ERROR_BOUND }
-        } else {
-            f32::MAX
-        };
 
         for (i, r) in collapse_remap.iter_mut().enumerate() {
             *r = i as u32;
         }
 
         collapse_locked.fill(false);
+
+        #[cfg(feature = "trace")]
+        {
+            println!("pass: {pass_count}");
+            pass_count += 1;
+        }
 
         let collapses = perform_edge_collapses(
             &mut collapse_remap,
@@ -1291,9 +1405,11 @@ where
             &remap,
             &wedge,
             &vertex_kind,
+            &vertex_positions,
+            &adjacency,
             triangle_collapse_goal,
-            error_goal,
             error_limit,
+            &mut result_error_max,
         );
 
         // no edges can be collapsed any more due to hitting the error limit or triangle collapse limit
@@ -1307,46 +1423,29 @@ where
         let new_count = remap_index_buffer(&mut result[0..result_count], &collapse_remap);
         assert!(new_count < result_count);
 
-        #[cfg(feature = "trace")]
-        {
-            let mut pass_error = 0.0;
-            for i in 0..edge_collapse_count {
-                let c = &edge_collapses[collapse_order[i as usize] as usize];
-
-                if collapse_remap[c.v0 as usize] == c.v1 {
-                    pass_error = unsafe { c.u.error };
-                }
-            }
-
-            pass_count += 1;
-            worst_error = if worst_error < pass_error {
-                pass_error
-            } else {
-                worst_error
-            };
-
-            println!(
-                "pass {pass_count}: triangles: {} -> {}, collapses: {collapses}/{edge_collapse_count} (goal: {edge_collapse_goal}), error: {pass_error:e} (limit {error_limit:e} goal {error_goal:e})",
-                result_count / 3,
-                new_count / 3,
-            );
-        }
-
         result_count = new_count;
     }
 
     #[cfg(feature = "trace")]
-    println!("passes: {pass_count}, worst error: {worst_error:e}");
+    println!(
+        "result: {result_count} triangles, error: {:e}; total {pass_count} passes",
+        result_error_max.sqrt()
+    );
 
     #[cfg(feature = "trace")]
     dump_locked_collapses(&result, &vertex_kind);
+
+    // result_error is quadratic; we need to remap it back to linear
+    if let Some(result_error) = result_error {
+        *result_error = result_error_max.sqrt();
+    }
 
     result_count
 }
 
 /// Reduces the number of triangles in the mesh, sacrificing mesh apperance for simplification performance.
 ///
-/// The algorithm doesn't preserve mesh topology but is always able to reach target triangle count.
+/// The algorithm doesn't preserve mesh topology but can stop short of the target goal based on target error.
 ///
 /// Returns the number of indices after simplification, with destination containing new index data
 /// The resulting index buffer references vertices from the original vertex buffer.
@@ -1354,12 +1453,16 @@ where
 ///
 /// # Arguments
 ///
-/// * `destination`: must contain enough space for the target index buffer
+/// * `destination`: must contain enough space for the target index buffer, worst case is `indices.len()` elements (**not** `target_index_count`)!
+/// * `target_error`: represents the error relative to mesh extents that can be tolerated, e.g. 0.01 = 1% deformation
+/// * `result_error`: can be None; when it's not None, it will contain the resulting (relative) error after simplification
 pub fn simplify_sloppy<Vertex>(
     destination: &mut [u32],
     indices: &[u32],
     vertices: &[Vertex],
     target_index_count: usize,
+    target_error: f32,
+    result_error: Option<&mut f32>,
 ) -> usize
 where
     Vertex: Position,
@@ -1369,10 +1472,6 @@ where
 
     // we expect to get ~2 triangles/vertex in the output
     let target_cell_count = target_index_count / 6;
-
-    if target_cell_count == 0 {
-        return 0;
-    }
 
     let mut vertex_positions = vec![Vector3::default(); vertices.len()];
     rescale_positions(&mut vertex_positions, vertices);
@@ -1392,17 +1491,24 @@ where
     const INTERPOLATION_PASSES: i32 = 5;
 
     // invariant: # of triangles in min_grid <= target_count
-    let mut min_grid: i32 = 0;
+    let mut min_grid = (1.0 / target_error.max(1e-3)) as i32;
     let mut max_grid: i32 = 1025;
     let mut min_triangles = 0;
     let mut max_triangles = indices.len() / 3;
+
+    // when we're error-limited, we compute the triangle count for the min. size; this accelerates convergence and provides the correct answer when we can't use a larger grid
+    if min_grid > 1 {
+        compute_vertex_ids(&mut vertex_ids, &vertex_positions, min_grid);
+        min_triangles = count_triangles(&vertex_ids, indices);
+    }
 
     // instead of starting in the middle, let's guess as to what the answer might be! triangle count usually grows as a square of grid size...
     let mut next_grid_size = ((target_cell_count as f32).sqrt() + 0.5) as i32;
 
     for pass in 0..10 + INTERPOLATION_PASSES {
-        assert!(min_triangles < target_index_count / 3);
-        assert!(max_grid - min_grid > 1);
+        if min_triangles >= target_index_count / 3 || max_grid - min_grid <= 1 {
+            break;
+        }
 
         // we clamp the prediction of the grid size to make sure that the search converges
         let mut grid_size = next_grid_size;
@@ -1448,10 +1554,6 @@ where
             max_triangles = triangles;
         }
 
-        if triangles == target_index_count / 3 || max_grid - min_grid <= 1 {
-            break;
-        }
-
         // we start by using interpolation search - it usually converges faster
         // however, interpolation search has a worst case of O(N) so we switch to binary search after a few iterations which converges in O(logN)
         next_grid_size = if pass < INTERPOLATION_PASSES {
@@ -1462,6 +1564,10 @@ where
     }
 
     if min_triangles == 0 {
+        if let Some(result_error) = result_error {
+            *result_error = 1.0;
+        }
+
         return 0;
     }
 
@@ -1503,6 +1609,10 @@ where
         write / 3
     );
 
+    if let Some(result_error) = result_error {
+        *result_error = cell_errors.into_iter().reduce(f32::max).unwrap().sqrt();
+    }
+
     write
 }
 
@@ -1514,7 +1624,7 @@ where
 ///
 /// # Arguments
 ///
-/// * `destination`: must contain enough space for the target index buffer
+/// * `destination`: must contain enough space for the target index buffer (`target_vertex_count` elements)
 pub fn simplify_points<Vertex>(destination: &mut [u32], vertices: &[Vertex], target_vertex_count: usize) -> usize
 where
     Vertex: Position,
@@ -1651,6 +1761,19 @@ where
     cell_count
 }
 
+/// Returns the error scaling factor used by the simplifier to convert between absolute and relative extents
+///
+/// Absolute error must be **divided** by the scaling factor before passing it to [simplify] as `target_error`.
+/// Relative error returned by [simplify] via `result_error` must be **multiplied** by the scaling factor to get absolute error.
+pub fn simplify_scale<Vertex>(vertices: &[Vertex]) -> f32
+where
+    Vertex: Position,
+{
+    let (_minv, extent) = calc_pos_extents(vertices);
+
+    extent
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -1686,7 +1809,7 @@ mod test {
         let vb1 = vb_from_slice(&[0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]);
         let ib1 = [0, 1, 2, 0, 2, 3, 0, 3, 1, 2, 1, 3];
 
-        assert_eq!(simplify(&mut dst, &ib1, &vb1, 6, 0.001), 12);
+        assert_eq!(simplify(&mut dst, &ib1, &vb1, 6, 0.001, None), 12);
 
         // 5-vertex strip can't be simplified due to topology restriction since middle triangle has flipped winding
         let vb2 = vb_from_slice(&[
@@ -1695,14 +1818,14 @@ mod test {
         let ib2 = [0, 1, 3, 3, 1, 4, 1, 2, 4]; // ok
         let ib3 = [0, 1, 3, 1, 3, 4, 1, 2, 4]; // flipped
 
-        assert_eq!(simplify(&mut dst, &ib2, &vb2, 6, 0.001), 6);
-        assert_eq!(simplify(&mut dst, &ib3, &vb2, 6, 0.001), 9);
+        assert_eq!(simplify(&mut dst, &ib2, &vb2, 6, 0.001, None), 6);
+        assert_eq!(simplify(&mut dst, &ib3, &vb2, 6, 0.001, None), 9);
 
         // 4-vertex quad with a locked corner can't be simplified due to border error-induced restriction
         let vb4 = vb_from_slice(&[0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 1.0, 1.0, 0.0]);
         let ib4 = [0, 1, 3, 0, 3, 2];
 
-        assert_eq!(simplify(&mut dst, &ib4, &vb4, 3, 0.001), 6);
+        assert_eq!(simplify(&mut dst, &ib4, &vb4, 3, 0.001, None), 6);
 
         // 4-vertex quad with a locked corner can't be simplified due to border error-induced restriction
         let vb5 = vb_from_slice(&[
@@ -1710,7 +1833,7 @@ mod test {
         ]);
         let ib5 = [0, 1, 4, 0, 3, 2];
 
-        assert_eq!(simplify(&mut dst, &ib5, &vb5, 3, 0.001), 6);
+        assert_eq!(simplify(&mut dst, &ib5, &vb5, 3, 0.001, None), 6);
     }
 
     #[test]
@@ -1721,10 +1844,10 @@ mod test {
         let ib = [0, 1, 2, 0, 1, 2];
 
         // simplifying down to 0 triangles results in 0 immediately
-        assert_eq!(simplify_sloppy(&mut dst, &ib[0..3], &vb, 0), 0);
+        assert_eq!(simplify_sloppy(&mut dst, &ib[0..3], &vb, 0, 0.0, None), 0);
 
         // simplifying down to 2 triangles given that all triangles are degenerate results in 0 as well
-        assert_eq!(simplify_sloppy(&mut dst, &ib, &vb, 6), 0);
+        assert_eq!(simplify_sloppy(&mut dst, &ib, &vb, 6, 0.0, None), 0);
     }
 
     #[test]
@@ -1735,5 +1858,64 @@ mod test {
 
         // simplifying down to 0 points results in 0 immediately
         assert_eq!(simplify_points(&mut dst, &vb, 0), 0);
+    }
+
+    #[test]
+    fn test_simplify_flip() {
+        // this mesh has been constructed by taking a tessellated irregular grid with a square cutout
+        // and progressively collapsing edges until the only ones left violate border or flip constraints.
+        // there is only one valid non-flip collapse, so we validate that we take it; when flips are allowed,
+        // the wrong collapse is picked instead.
+        #[rustfmt::skip]
+        let vb = vb_from_slice(&[
+            1.000000, 1.000000, -1.000000, 
+            1.000000, 1.000000, 1.000000, 
+            1.000000, -1.000000, 1.000000, 
+            1.000000, -0.200000, -0.200000, 
+            1.000000, 0.200000, -0.200000, 
+            1.000000, -0.200000, 0.200000, 
+            1.000000, 0.200000, 0.200000, 
+            1.000000, 0.500000, -0.500000, 
+            1.000000, -1.000000, 0.000000,
+        ]);
+
+        // the collapse we expect is 7 -> 0
+        #[rustfmt::skip]
+        let ib = [
+            7, 4, 3, 
+            1, 2, 5, 
+            7, 1, 6, 
+            7, 8, 0, // gets removed
+            7, 6, 4, 
+            8, 5, 2, 
+            8, 7, 3, 
+            8, 3, 5, 
+            5, 6, 1, 
+            7, 0, 1, // gets removed
+        ];
+
+        #[rustfmt::skip]
+        let expected = [
+            0, 4, 3, 
+            1, 2, 5, 
+            0, 1, 6, 
+            0, 6, 4, 
+            8, 5, 2, 
+            8, 0, 3, 
+            8, 3, 5, 
+            5, 6, 1,
+        ];
+
+        let mut dst = vec![0; ib.len()];
+
+        assert_eq!(simplify(&mut dst, &ib, &vb, 12, 1e-3, None), expected.len());
+        assert_eq!(&dst[0..expected.len()], expected);
+    }
+
+    #[test]
+    fn test_simplify_scale() {
+        let vb = vb_from_slice(&[0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 2.0, 0.0, 0.0, 0.0, 3.0]);
+
+        assert_eq!(simplify_scale(&vb), 3.0);
     }
 }

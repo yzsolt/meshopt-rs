@@ -125,7 +125,7 @@ impl Mesh {
         println!(
             "# {:?}: {} vertices, {} triangles; read in {:.2} msec; indexed in {:.2} msec",
             path,
-            vertices.len(),
+            result.vertices.len(),
             total_indices / 3,
             read.as_micros() as f64 / 1000.0,
             indexed.as_micros() as f64 / 1000.0,
@@ -569,6 +569,7 @@ fn simplify_mesh(mesh: &Mesh) {
 
     let target_index_count = (mesh.indices.len() as f32 * threshold) as usize;
     let target_error = 0.01;
+    let mut result_error = 0.0;
 
     lod.indices.resize(mesh.indices.len(), 0); // note: simplify needs space for index_count elements in the destination array, not `target_index_count`
     let size = simplify(
@@ -577,6 +578,7 @@ fn simplify_mesh(mesh: &Mesh) {
         &mesh.vertices,
         target_index_count,
         target_error,
+        Some(&mut result_error),
     );
     lod.indices.resize(size, 0);
 
@@ -592,10 +594,11 @@ fn simplify_mesh(mesh: &Mesh) {
     let duration = start.elapsed();
 
     println!(
-        "{:9}: {} triangles => {} triangles in {:.2} msec",
+        "{:9}: {} triangles => {} triangles  ({:.2}% deviation) in {:.2} msec",
         "Simplify",
         mesh.indices.len() / 3,
         lod.indices.len() / 3,
+        result_error * 100.0,
         duration.as_micros() as f64 / 1000.0
     );
 }
@@ -607,9 +610,18 @@ fn simplify_mesh_sloppy(mesh: &Mesh, threshold: f32) {
     let start = Instant::now();
 
     let target_index_count = (mesh.indices.len() as f32 * threshold) as usize;
+    let target_error = 1e-1;
+    let mut result_error = 0.0;
 
-    lod.indices.resize(target_index_count, Default::default()); // note: `simplify_loppy`, unlike `simplify`, is guaranteed to output results that don't exceed the requested `target_index_count`
-    let size = simplify_sloppy(&mut lod.indices, &mesh.indices, &mesh.vertices, target_index_count);
+    lod.indices.resize(target_index_count, Default::default()); // note: simplify needs space for `index_count` elements in the destination array, not `target_index_count`
+    let size = simplify_sloppy(
+        &mut lod.indices,
+        &mesh.indices,
+        &mesh.vertices,
+        target_index_count,
+        target_error,
+        Some(&mut result_error),
+    );
     lod.indices.resize(size, Default::default());
 
     lod.vertices.resize(
@@ -626,10 +638,11 @@ fn simplify_mesh_sloppy(mesh: &Mesh, threshold: f32) {
     let duration = start.elapsed();
 
     println!(
-        "{:9}: {} triangles => {} triangles in {:.2} msec",
+        "{:9}: {} triangles => {} triangles ({:.2}% deviation) in {:.2} msec",
         "SimplifyS",
         mesh.indices.len() / 3,
         lod.indices.len() / 3,
+        result_error * 100.0,
         duration.as_micros() as f64 / 1000.0
     );
 }
@@ -685,7 +698,14 @@ fn simplify_mesh_complete(mesh: &Mesh) {
         }
 
         lod.resize(source.len(), Default::default());
-        let size = simplify(&mut lod, &source, &mesh.vertices, target_index_count, target_error);
+        let size = simplify(
+            &mut lod,
+            &source,
+            &mesh.vertices,
+            target_index_count,
+            target_error,
+            None,
+        );
         lod.resize(size, Default::default());
     }
 
@@ -871,21 +891,51 @@ fn shadow(mesh: &Mesh) {
 }
 
 #[cfg(feature = "experimental")]
-fn meshlets(mesh: &Mesh) {
+fn meshlets(mesh: &Mesh, scan: bool) {
     const MAX_VERTICES: usize = 64;
-    const MAX_TRIANGLES: usize = 126;
+    const MAX_TRIANGLES: usize = 124; // NVidia-recommended 126, rounded down to a multiple of 4
+    const CONE_WEIGHT: f32 = 0.5; // note: should be set to 0 unless cone culling is used at runtime!
 
     // note: input mesh is assumed to be optimized for vertex cache and vertex fetch
     let start = Instant::now();
-    let mut meshlets = vec![Meshlet::default(); build_meshlets_bound(mesh.indices.len(), MAX_VERTICES, MAX_TRIANGLES)];
-    let size = build_meshlets(
-        &mut meshlets,
-        &mesh.indices,
-        mesh.vertices.len(),
-        MAX_VERTICES,
-        MAX_TRIANGLES,
-    );
-    meshlets.resize(size, Meshlet::default());
+    let max_meshlets = build_meshlets_bound(mesh.indices.len(), MAX_VERTICES, MAX_TRIANGLES);
+    let mut meshlets = vec![Meshlet::default(); max_meshlets];
+    let mut meshlet_vertices = vec![0u32; max_meshlets * MAX_VERTICES];
+    let mut meshlet_triangles = vec![0u8; max_meshlets * MAX_TRIANGLES * 3];
+
+    let size = if scan {
+        build_meshlets_scan(
+            &mut meshlets,
+            &mut meshlet_vertices,
+            &mut meshlet_triangles,
+            &mesh.indices,
+            mesh.vertices.len(),
+            MAX_VERTICES,
+            MAX_TRIANGLES,
+        )
+    } else {
+        build_meshlets(
+            &mut meshlets,
+            &mut meshlet_vertices,
+            &mut meshlet_triangles,
+            &mesh.indices,
+            &mesh.vertices,
+            MAX_VERTICES,
+            MAX_TRIANGLES,
+            CONE_WEIGHT,
+        )
+    };
+
+    meshlets.truncate(size);
+
+    if !meshlets.is_empty() {
+        let last = meshlets.last().unwrap();
+
+        // this is an example of how to trim the vertex/triangle arrays when copying data out to GPU storage
+        meshlet_vertices.truncate((last.vertex_offset + last.vertex_count) as usize);
+        meshlet_triangles.truncate((last.triangle_offset + ((last.triangle_count * 3 + 3) & !3)) as usize);
+    }
+
     let duration = start.elapsed();
 
     let mut vertices = 0;
@@ -899,7 +949,8 @@ fn meshlets(mesh: &Mesh) {
     }
 
     println!(
-        "Meshlets : {} meshlets (avg vertices {:.1}, avg triangles {:.1}, not full {}) in {:.2} msec",
+        "Meshlets{}: {} meshlets (avg vertices {:.1}, avg triangles {:.1}, not full {}) in {:.2} msec",
+        if scan { 'S' } else { ' ' },
         meshlets.len(),
         vertices as f64 / meshlets.len() as f64,
         triangles as f64 / meshlets.len() as f64,
@@ -916,9 +967,17 @@ fn meshlets(mesh: &Mesh) {
     let mut accepted = 0;
     let mut accepted_s8 = 0;
 
+    let mut radii = vec![0f64; meshlets.len()];
+
     let start = Instant::now();
-    for meshlet in &meshlets {
-        let bounds = compute_meshlet_bounds(&meshlet, &mesh.vertices);
+    for (m, radius) in meshlets.iter().zip(radii.iter_mut()) {
+        let bounds = compute_meshlet_bounds(
+            &meshlet_vertices[m.vertex_offset as usize..],
+            &meshlet_triangles[m.triangle_offset as usize..(m.triangle_offset + m.triangle_count * 3) as usize],
+            &mesh.vertices,
+        );
+
+        *radius = bounds.radius as f64;
 
         // trivial accept: we can't ever backface cull this meshlet
         accepted += (bounds.cone_cutoff >= 1.0) as usize;
@@ -958,6 +1017,19 @@ fn meshlets(mesh: &Mesh) {
             as usize;
     }
     let duration = start.elapsed();
+
+    let radius_mean: f64 = radii.iter().sum::<f64>() / radii.len() as f64;
+    let radius_variance: f64 =
+        radii.iter().map(|r| (r - radius_mean) * (r - radius_mean)).sum::<f64>() / (radii.len() - 1) as f64;
+    let radius_stddev = radius_variance.sqrt();
+    let meshlets_std: usize = radii.iter().map(|r| (*r < radius_mean + radius_stddev) as usize).sum();
+
+    println!(
+        "BoundDist: mean {:.6} stddev {:.6}; {:.1}% meshlets are under mean+stddev",
+        radius_mean,
+        radius_stddev,
+        meshlets_std as f64 / meshlets.len() as f64 * 100.0
+    );
 
     println!(
         "ConeCull : rejected apex {} ({:.1}%) / center {} ({:.1}%), trivially accepted {} ({:.1}%) in {:.2} msec",
@@ -1155,6 +1227,36 @@ where
     Ok(())
 }
 
+#[cfg(feature = "experimental")]
+fn tessellation_adjacency(mesh: &Mesh) {
+    let start = Instant::now();
+
+    // 12 indices per input triangle
+    let mut tessib = vec![0u32; mesh.indices.len() * 4];
+    generate_tessellation_index_buffer(&mut tessib, &mesh.indices, &Stream::from_slice(&mesh.vertices));
+
+    let tess = start.elapsed();
+
+    let start = Instant::now();
+
+    // 6 indices per input triangle
+    let mut adjib = vec![0u32; mesh.indices.len() * 4];
+    generate_adjacency_index_buffer(&mut adjib, &mesh.indices, &Stream::from_slice(&mesh.vertices));
+
+    let adj = start.elapsed();
+
+    println!(
+        "Tesselltn: {} patches in {:.2} msec",
+        mesh.indices.len() / 3,
+        tess.as_micros() as f64 / 1000.0
+    );
+    println!(
+        "Adjacency: {} patches in {:.2} msec",
+        mesh.indices.len() / 3,
+        adj.as_micros() as f64 / 1000.0
+    );
+}
+
 fn process(mesh: &Mesh) {
     optimize(mesh, "Original", |_| {});
     optimize(mesh, "Random", opt_random_shuffle);
@@ -1181,8 +1283,14 @@ fn process(mesh: &Mesh) {
     stripify_mesh(&copystrip, true, 'S');
 
     #[cfg(feature = "experimental")]
-    meshlets(&copy);
+    {
+        meshlets(&copy, false);
+        meshlets(&copy, true);
+    }
+
     shadow(&copy);
+    #[cfg(feature = "experimental")]
+    tessellation_adjacency(&copy);
 
     encode_index(&copy, ' ');
     encode_index(&copystrip, 'S');
@@ -1210,12 +1318,27 @@ fn process(mesh: &Mesh) {
     }
 }
 
+fn process_dev(#[allow(unused)] mesh: &Mesh) {
+    #[cfg(feature = "experimental")]
+    tessellation_adjacency(&mesh);
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    for argument in env::args().skip(1) {
-        println!("{}", argument);
-        let mesh = Mesh::load(argument.clone())?;
-        process(&mesh);
-        process_deinterleaved(argument)?;
+    let args: Vec<String> = env::args().skip(1).collect();
+    let dev_mode = match args.first() {
+        Some(arg) => arg == "-d",
+        None => false,
+    };
+
+    for arg in args.iter().skip(if dev_mode { 1 } else { 0 }) {
+        let mesh = Mesh::load(arg.clone())?;
+
+        if dev_mode {
+            process_dev(&mesh);
+        } else {
+            process(&mesh);
+            process_deinterleaved(arg)?;
+        }
     }
 
     Ok(())

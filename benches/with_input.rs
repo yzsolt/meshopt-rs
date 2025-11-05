@@ -185,18 +185,24 @@ fn with_input(c: &mut Criterion) {
     #[cfg(feature = "experimental")]
     c.bench_with_input(BenchmarkId::new("build_meshlets", input_name), &copy, |b, mesh| {
         const MAX_VERTICES: usize = 64;
-        const MAX_TRIANGLES: usize = 126;
+        const MAX_TRIANGLES: usize = 124;
+        const CONE_WEIGHT: f32 = 0.5;
 
-        let mut meshlets =
-            vec![Meshlet::default(); build_meshlets_bound(mesh.indices.len(), MAX_VERTICES, MAX_TRIANGLES)];
+        let max_meshlets = build_meshlets_bound(mesh.indices.len(), MAX_VERTICES, MAX_TRIANGLES);
+        let mut meshlets = vec![Meshlet::default(); max_meshlets];
+        let mut meshlet_vertices = vec![0u32; max_meshlets * MAX_VERTICES];
+        let mut meshlet_triangles = vec![0u8; max_meshlets * MAX_TRIANGLES * 3];
 
         b.iter(|| {
             build_meshlets(
                 &mut meshlets,
+                &mut meshlet_vertices,
+                &mut meshlet_triangles,
                 &mesh.indices,
-                mesh.vertices.len(),
+                &mesh.vertices,
                 MAX_VERTICES,
                 MAX_TRIANGLES,
+                CONE_WEIGHT,
             )
         });
     });
@@ -207,21 +213,33 @@ fn with_input(c: &mut Criterion) {
         &copy,
         |b, mesh| {
             const MAX_VERTICES: usize = 64;
-            const MAX_TRIANGLES: usize = 126;
+            const MAX_TRIANGLES: usize = 124;
+            const CONE_WEIGHT: f32 = 0.5;
 
-            let mut meshlets =
-                vec![Meshlet::default(); build_meshlets_bound(mesh.indices.len(), MAX_VERTICES, MAX_TRIANGLES)];
+            let max_meshlets = build_meshlets_bound(mesh.indices.len(), MAX_VERTICES, MAX_TRIANGLES);
+            let mut meshlets = vec![Meshlet::default(); max_meshlets];
+            let mut meshlet_vertices = vec![0u32; max_meshlets * MAX_VERTICES];
+            let mut meshlet_triangles = vec![0u8; max_meshlets * MAX_TRIANGLES * 3];
+
             build_meshlets(
                 &mut meshlets,
+                &mut meshlet_vertices,
+                &mut meshlet_triangles,
                 &mesh.indices,
-                mesh.vertices.len(),
+                &mesh.vertices,
                 MAX_VERTICES,
                 MAX_TRIANGLES,
+                CONE_WEIGHT,
             );
 
             b.iter(|| {
                 for meshlet in &meshlets {
-                    compute_meshlet_bounds(&meshlet, &mesh.vertices);
+                    compute_meshlet_bounds(
+                        &meshlet_vertices[meshlet.vertex_offset as usize..],
+                        &meshlet_triangles[meshlet.triangle_offset as usize
+                            ..(meshlet.triangle_offset + meshlet.triangle_count * 3) as usize],
+                        &mesh.vertices,
+                    );
                 }
             });
         },
