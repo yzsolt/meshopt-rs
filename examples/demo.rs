@@ -1228,19 +1228,32 @@ where
 }
 
 #[cfg(feature = "experimental")]
-fn tessellation(mesh: &Mesh) {
+fn tessellation_adjacency(mesh: &Mesh) {
     let start = Instant::now();
 
     // 12 indices per input triangle
-    let mut patchib = vec![0u32; mesh.indices.len() * 4];
-    generate_tessellation_index_buffer(&mut patchib, &mesh.indices, &Stream::from_slice(&mesh.vertices));
+    let mut tessib = vec![0u32; mesh.indices.len() * 4];
+    generate_tessellation_index_buffer(&mut tessib, &mesh.indices, &Stream::from_slice(&mesh.vertices));
 
     let tess = start.elapsed();
+
+    let start = Instant::now();
+
+    // 6 indices per input triangle
+    let mut adjib = vec![0u32; mesh.indices.len() * 4];
+    generate_adjacency_index_buffer(&mut adjib, &mesh.indices, &Stream::from_slice(&mesh.vertices));
+
+    let adj = start.elapsed();
 
     println!(
         "Tesselltn: {} patches in {:.2} msec",
         mesh.indices.len() / 3,
         tess.as_micros() as f64 / 1000.0
+    );
+    println!(
+        "Adjacency: {} patches in {:.2} msec",
+        mesh.indices.len() / 3,
+        adj.as_micros() as f64 / 1000.0
     );
 }
 
@@ -1275,7 +1288,7 @@ fn process(mesh: &Mesh) {
 
     shadow(&copy);
     #[cfg(feature = "experimental")]
-    tessellation(&copy);
+    tessellation_adjacency(&copy);
 
     encode_index(&copy, ' ');
     encode_index(&copystrip, 'S');
@@ -1305,7 +1318,7 @@ fn process(mesh: &Mesh) {
 
 fn process_dev(mesh: &Mesh) {
     #[cfg(feature = "experimental")]
-    tessellation(&mesh);
+    tessellation_adjacency(&mesh);
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
