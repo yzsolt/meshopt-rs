@@ -214,11 +214,10 @@ fn finish_meshlet(meshlet: &Meshlet, meshlet_triangles: &mut [u8]) {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn append_meshlet(
     meshlet: &mut Meshlet,
-    a: u32,
-    b: u32,
-    c: u32,
+    abc: [u32; 3],
     used: &mut [u8],
     meshlets: &mut [Meshlet],
     meshlet_vertices: &mut [u32],
@@ -227,6 +226,8 @@ fn append_meshlet(
     max_vertices: usize,
     max_triangles: usize,
 ) -> bool {
+    let [a, b, c] = abc;
+
     let av = used[a as usize];
     let bv = used[b as usize];
     let cv = used[c as usize];
@@ -259,21 +260,21 @@ fn append_meshlet(
     if av == UNUSED {
         av = meshlet.vertex_count as u8;
         used[a as usize] = av;
-        meshlet_vertices[(meshlet.vertex_offset + meshlet.vertex_count) as usize] = a.try_into().unwrap();
+        meshlet_vertices[(meshlet.vertex_offset + meshlet.vertex_count) as usize] = a;
         meshlet.vertex_count += 1;
     }
 
     if bv == UNUSED {
         bv = meshlet.vertex_count as u8;
         used[b as usize] = bv;
-        meshlet_vertices[(meshlet.vertex_offset + meshlet.vertex_count) as usize] = b.try_into().unwrap();
+        meshlet_vertices[(meshlet.vertex_offset + meshlet.vertex_count) as usize] = b;
         meshlet.vertex_count += 1;
     }
 
     if cv == UNUSED {
         cv = meshlet.vertex_count as u8;
         used[c as usize] = cv;
-        meshlet_vertices[(meshlet.vertex_offset + meshlet.vertex_count) as usize] = c.try_into().unwrap();
+        meshlet_vertices[(meshlet.vertex_offset + meshlet.vertex_count) as usize] = c;
         meshlet.vertex_count += 1;
     }
 
@@ -313,9 +314,7 @@ where
         let v = points[indices[i] as usize].pos()[axis as usize];
 
         // swap(m, i) unconditionally
-        let t = indices[m];
-        indices[m] = indices[i];
-        indices[i] = t;
+        indices.swap(m, i);
 
         // when v >= pivot, we swap i with m without advancing it, preserving invariants
         m += (v < pivot) as usize;
@@ -383,8 +382,10 @@ where
     // split axis is one where the variance is largest
     let axis: u32 = if vars[0] >= vars[1] && vars[0] >= vars[2] {
         0
+    } else if vars[1] >= vars[2] {
+        1
     } else {
-        if vars[1] >= vars[2] { 1 } else { 2 }
+        2
     };
 
     let split = mean[axis as usize];
@@ -471,17 +472,17 @@ fn kd_tree_nearest<Point>(
 
 /// Returns worst case size requirement for [build_meshlets].
 pub fn build_meshlets_bound(index_count: usize, max_vertices: usize, max_triangles: usize) -> usize {
-    assert!(index_count % 3 == 0);
-    assert!(max_vertices >= 3 && max_vertices <= MESHLET_MAX_VERTICES);
-    assert!(max_triangles >= 1 && max_triangles <= MESHLET_MAX_TRIANGLES);
-    assert!(max_triangles % 4 == 0); // ensures the caller will compute output space properly as index data is 4b aligned
+    assert!(index_count.is_multiple_of(3));
+    assert!((3..=MESHLET_MAX_VERTICES).contains(&max_vertices));
+    assert!((1..=MESHLET_MAX_TRIANGLES).contains(&max_triangles));
+    assert!(max_triangles.is_multiple_of(4)); // ensures the caller will compute output space properly as index data is 4b aligned
 
     // meshlet construction is limited by max vertices and max triangles per meshlet
     // the worst case is that the input is an unindexed stream since this equally stresses both limits
     // note that we assume that in the worst case, we leave 2 vertices unpacked in each meshlet - if we have space for 3 we can pack any triangle
     let max_vertices_conservative = max_vertices - 2;
-    let meshlet_limit_vertices = (index_count + max_vertices_conservative - 1) / max_vertices_conservative;
-    let meshlet_limit_triangles = (index_count / 3 + max_triangles - 1) / max_triangles;
+    let meshlet_limit_vertices = index_count.div_ceil(max_vertices_conservative);
+    let meshlet_limit_triangles = (index_count / 3).div_ceil(max_triangles);
 
     if meshlet_limit_vertices > meshlet_limit_triangles {
         meshlet_limit_vertices
@@ -510,10 +511,10 @@ pub fn build_meshlets_scan(
     max_vertices: usize,
     max_triangles: usize,
 ) -> usize {
-    assert!(indices.len() % 3 == 0);
-    assert!(max_vertices >= 3 && max_vertices <= MESHLET_MAX_VERTICES);
-    assert!(max_triangles >= 1 && max_triangles <= MESHLET_MAX_TRIANGLES);
-    assert!(max_triangles % 4 == 0); // ensures the caller will compute output space properly as index data is 4b aligned
+    assert!(indices.len().is_multiple_of(3));
+    assert!((3..=MESHLET_MAX_VERTICES).contains(&max_vertices));
+    assert!((1..=MESHLET_MAX_TRIANGLES).contains(&max_triangles));
+    assert!(max_triangles.is_multiple_of(4)); // ensures the caller will compute output space properly as index data is 4b aligned
 
     // index of the vertex in the meshlet, `UNUSED` if the vertex isn't used
     let mut used = vec![UNUSED; vertex_count];
@@ -521,15 +522,11 @@ pub fn build_meshlets_scan(
     let mut meshlet = Meshlet::default();
     let mut meshlet_offset = 0;
 
-    for abc in indices.chunks_exact(3) {
-        let (a, b, c) = (abc[0], abc[1], abc[2]);
-
+    for abc in indices.as_chunks().0 {
         // appends triangle to the meshlet and writes previous meshlet to the output if full
         meshlet_offset += append_meshlet(
             &mut meshlet,
-            a,
-            b,
-            c,
+            *abc,
             &mut used,
             meshlets,
             meshlet_vertices,
@@ -564,6 +561,7 @@ pub fn build_meshlets_scan(
 /// * `meshlet_triangles`: must contain enough space for all meshlets, worst case size is equal to `max_meshlets` * `max_triangles * 3`
 /// * `max_vertices` and `max_triangles`: must not exceed implementation limits (`max_vertices` <= 255 - not 256!, `max_triangles` <= 512)
 /// * `cone_weight`: should be set to 0 when cone culling is not used, and a value between 0 and 1 otherwise to balance between cluster size and cone culling efficiency
+#[allow(clippy::too_many_arguments)]
 pub fn build_meshlets<Vertex>(
     meshlets: &mut [Meshlet],
     meshlet_vertices: &mut [u32],
@@ -577,11 +575,11 @@ pub fn build_meshlets<Vertex>(
 where
     Vertex: Position,
 {
-    assert!(indices.len() % 3 == 0);
+    assert!(indices.len().is_multiple_of(3));
 
-    assert!(max_vertices >= 3 && max_vertices <= MESHLET_MAX_VERTICES);
-    assert!(max_triangles >= 1 && max_triangles <= max_triangles);
-    assert!(max_triangles % 4 == 0); // ensures the caller will compute output space properly as index data is 4b aligned
+    assert!((3..=MESHLET_MAX_VERTICES).contains(&max_vertices));
+    assert!((1..=MESHLET_MAX_TRIANGLES).contains(&max_triangles));
+    assert!(max_triangles.is_multiple_of(4)); // ensures the caller will compute output space properly as index data is 4b aligned
 
     let mut adjacency = TriangleAdjacency::default();
     build_triangle_adjacency(&mut adjacency, indices, vertices.len());
@@ -594,7 +592,7 @@ where
 
     // for each triangle, precompute centroid & normal to use for scoring
     let mut triangles = vec![Cone::default(); face_count];
-    let mesh_area = compute_triangle_cones(&mut triangles, indices, &vertices);
+    let mesh_area = compute_triangle_cones(&mut triangles, indices, vertices);
 
     // assuming each meshlet is a square patch, expected radius is sqrt(expected area)
     let triangle_area_avg = if face_count == 0 {
@@ -605,10 +603,7 @@ where
     let meshlet_expected_radius = (triangle_area_avg * max_triangles as f32).sqrt() * 0.5;
 
     // build a kd-tree for nearest neighbor lookup
-    let mut kdindices = vec![0u32; face_count];
-    for i in 0..face_count {
-        kdindices[i] = i as u32;
-    }
+    let mut kdindices: Vec<u32> = (0..face_count).map(|c| c as u32).collect();
 
     let mut nodes = vec![KdNode::default(); face_count * 2];
     kd_tree_build(0, &mut nodes, &triangles, &mut kdindices, /* leaf_size= */ 8);
@@ -626,7 +621,7 @@ where
         let mut best_extra = 5;
         let mut best_score = f32::MAX;
 
-        let meshlet_cone = get_meshlet_cone(&meshlet_cone_acc, meshlet.triangle_count as u32);
+        let meshlet_cone = get_meshlet_cone(&meshlet_cone_acc, meshlet.triangle_count);
 
         for i in 0..meshlet.vertex_count {
             let index = meshlet_vertices[meshlet.vertex_offset as usize + i as usize] as usize;
@@ -635,8 +630,8 @@ where
             let neighbouts_offset = adjacency.offsets[index] as usize;
             let neighbours = &adjacency.data[neighbouts_offset..neighbouts_offset + neighbours_size];
 
-            for j in 0..neighbours_size {
-                let triangle = neighbours[j] as usize;
+            for triangle in neighbours {
+                let triangle = *triangle as usize;
                 assert!(!emitted_flags[triangle]);
 
                 let a = indices[triangle * 3 + 0] as usize;
@@ -695,15 +690,12 @@ where
         }
 
         if let Some(best_triangle) = best_triangle {
-            let abc = &indices[best_triangle * 3..best_triangle * 3 + 3];
-            let (a, b, c) = (abc[0], abc[1], abc[2]);
+            let abc: [u32; 3] = indices[best_triangle * 3..best_triangle * 3 + 3].try_into().unwrap();
 
             // add meshlet to the output; when the current meshlet is full we reset the accumulated bounds
             if append_meshlet(
                 &mut meshlet,
-                a,
-                b,
-                c,
+                abc,
                 &mut used,
                 meshlets,
                 meshlet_vertices,
@@ -716,6 +708,8 @@ where
                 meshlet_cone_acc = Cone::default();
             }
 
+            let [a, b, c] = abc;
+
             live_triangles[a as usize] -= 1;
             live_triangles[b as usize] -= 1;
             live_triangles[c as usize] -= 1;
@@ -723,7 +717,7 @@ where
             // remove emitted triangle from adjacency data
             // this makes sure that we spend less time traversing these lists on subsequent iterations
             for index in abc {
-                let index = *index as usize;
+                let index = index as usize;
 
                 let neighbours_offset = adjacency.offsets[index] as usize;
                 let neighbours_size = adjacency.counts[index] as usize;
@@ -797,7 +791,7 @@ pub fn compute_cluster_bounds<Vertex>(indices: &[u32], vertices: &[Vertex]) -> B
 where
     Vertex: Position,
 {
-    assert!(indices.len() % 3 == 0);
+    assert!(indices.len().is_multiple_of(3));
     assert!(indices.len() / 3 <= MESHLET_MAX_TRIANGLES);
 
     // compute triangle normals and gather triangle corners

@@ -17,7 +17,7 @@ pub struct VertexFetchStatistics {
 ///
 /// Results may not match actual GPU performance.
 pub fn analyze_vertex_fetch(indices: &[u32], vertex_count: usize, vertex_size: usize) -> VertexFetchStatistics {
-    assert!(indices.len() % 3 == 0);
+    assert!(indices.len().is_multiple_of(3));
     assert!(vertex_size > 0 && vertex_size <= 256);
 
     let mut result = VertexFetchStatistics::default();
@@ -41,7 +41,7 @@ pub fn analyze_vertex_fetch(indices: &[u32], vertex_count: usize, vertex_size: u
         let end_address = start_address + vertex_size;
 
         let start_tag = start_address / CACHE_LINE;
-        let end_tag = (end_address + CACHE_LINE - 1) / CACHE_LINE;
+        let end_tag = end_address.div_ceil(CACHE_LINE);
 
         assert!(start_tag < end_tag);
 
@@ -74,7 +74,7 @@ pub fn analyze_vertex_fetch(indices: &[u32], vertex_count: usize, vertex_size: u
 ///
 /// * `destination`: must contain the exact space for the resulting remap table (`vertex_count` elements)
 pub fn optimize_vertex_fetch_remap(destination: &mut [u32], indices: &[u32]) -> usize {
-    assert!(indices.len() % 3 == 0);
+    assert!(indices.len().is_multiple_of(3));
 
     destination[..].fill(INVALID_INDEX);
 
@@ -106,7 +106,7 @@ pub fn optimize_vertex_fetch<Vertex>(destination: &mut [Vertex], indices: &mut [
 where
     Vertex: Position + Copy,
 {
-    assert!(indices.len() % 3 == 0);
+    assert!(indices.len().is_multiple_of(3));
 
     // build vertex remap table
     let mut vertex_remap = vec![INVALID_INDEX; vertices.len()];

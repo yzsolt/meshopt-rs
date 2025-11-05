@@ -124,7 +124,7 @@ where
         if destination[index] == INVALID_INDEX {
             match table.entry(lookup(index)) {
                 Entry::Occupied(entry) => {
-                    let value = *entry.get() as usize;
+                    let value = *entry.get();
                     assert!(destination[value] != INVALID_INDEX);
                     destination[index] = destination[value];
                 }
@@ -200,7 +200,7 @@ pub fn generate_vertex_remap_multi(destination: &mut [u32], indices: Option<&[u3
 
     generate_vertex_remap_inner(destination, indices, vertex_count, |index| StreamVertex {
         streams,
-        index: index as usize,
+        index,
     })
 }
 
@@ -294,7 +294,7 @@ pub fn generate_shadow_index_buffer_multi(destination: &mut [u32], indices: &[u3
 
     generate_shadow_index_buffer_inner(destination, indices, vertex_count, |index| StreamVertex {
         streams,
-        index: index as usize,
+        index,
     })
 }
 
@@ -324,6 +324,7 @@ fn build_position_remap(indices: &[u32], vertices: &Stream) -> Vec<u32> {
 /// - 5, 6: opposing edge for edge 1, 2
 /// - 7, 8: opposing edge for edge 2, 0
 /// - 9, 10, 11: dominant vertices for corners 0, 1, 2
+///
 /// The resulting patch can be rendered with hardware tessellation using PN-AEN and displacement mapping.
 /// See "Tessellation on Any Budget" (John McDonald, GDC 2011) for implementation details.
 ///
@@ -392,7 +393,8 @@ pub fn generate_tessellation_index_buffer(destination: &mut [u32], indices: &[u3
 /// Each triangle is converted into a 6-vertex patch with the following layout:
 /// - 0, 2, 4: original triangle vertices
 /// - 1, 3, 5: vertices adjacent to edges 02, 24 and 40
-/// The resulting patch can be rendered with geometry shaders using e.g. `VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST_WITH_ADJACENCY``.
+///
+/// The resulting patch can be rendered with geometry shaders using e.g. `VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST_WITH_ADJACENCY`.
 /// This can be used to implement algorithms like silhouette detection/expansion and other forms of GS-driven rendering.
 ///
 /// # Arguments
@@ -420,12 +422,9 @@ pub fn generate_adjacency_index_buffer(destination: &mut [u32], indices: &[u32],
             let i2 = i[NEXT[e + 1]];
             assert!((i0 as usize) < vertices.len() && (i1 as usize) < vertices.len() && (i2 as usize) < vertices.len());
 
-            match edge_vertex_table.entry(Edge((remap[i0 as usize], remap[i1 as usize]))) {
-                Entry::Vacant(entry) => {
-                    // store vertex opposite to the edge
-                    entry.insert(i2);
-                }
-                _ => {}
+            if let Entry::Vacant(entry) = edge_vertex_table.entry(Edge((remap[i0 as usize], remap[i1 as usize]))) {
+                // store vertex opposite to the edge
+                entry.insert(i2);
             }
         }
     }

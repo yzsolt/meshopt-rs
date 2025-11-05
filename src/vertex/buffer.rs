@@ -38,7 +38,7 @@ fn encode_bytes_group_zero(buffer: &[u8]) -> bool {
 }
 
 fn encode_bytes_group_measure(buffer: &[u8], bits: usize) -> usize {
-    assert!(bits >= 1 && bits <= 8);
+    assert!((1..=8).contains(&bits));
 
     match bits {
         1 => {
@@ -65,14 +65,14 @@ fn encode_bytes_group_measure(buffer: &[u8], bits: usize) -> usize {
 }
 
 fn encode_bytes_group<W: Write>(data: &mut W, buffer: &[u8], bits: usize) -> Option<usize> {
-    assert!(bits >= 1 && bits <= 8);
+    assert!((1..=8).contains(&bits));
 
     match bits {
         1 => Some(0),
         8 => write_exact(data, &buffer[0..BYTE_GROUP_SIZE]),
         _ => {
             let byte_size = 8 / bits;
-            assert!(BYTE_GROUP_SIZE % byte_size == 0);
+            assert!(BYTE_GROUP_SIZE.is_multiple_of(byte_size));
 
             // fixed portion: bits bits for each value
             // variable portion: full byte for each out-of-range value (using 1...1 as sentinel)
@@ -97,9 +97,9 @@ fn encode_bytes_group<W: Write>(data: &mut W, buffer: &[u8], bits: usize) -> Opt
                 written += write_byte(data, byte);
             }
 
-            for i in 0..BYTE_GROUP_SIZE {
-                if buffer[i] >= sentinel {
-                    written += write_byte(data, buffer[i]);
+            for b in buffer.iter().take(BYTE_GROUP_SIZE) {
+                if *b >= sentinel {
+                    written += write_byte(data, *b);
                 }
             }
 
@@ -109,10 +109,10 @@ fn encode_bytes_group<W: Write>(data: &mut W, buffer: &[u8], bits: usize) -> Opt
 }
 
 fn encode_bytes(data: &mut [u8], buffer: &[u8]) -> Option<usize> {
-    assert!(buffer.len() % BYTE_GROUP_SIZE == 0);
+    assert!(buffer.len().is_multiple_of(BYTE_GROUP_SIZE));
 
     // round number of groups to 4 to get number of header bytes
-    let header_size = (buffer.len() / BYTE_GROUP_SIZE + 3) / 4;
+    let header_size = (buffer.len() / BYTE_GROUP_SIZE).div_ceil(4);
 
     if data.len() < header_size {
         return None;
@@ -175,16 +175,15 @@ fn encode_vertex_block(
 
     // we sometimes encode elements we didn't fill when rounding to BYTE_GROUP_SIZE
     let mut buffer = [0u8; VERTEX_BLOCK_MAX_SIZE];
-    assert!(VERTEX_BLOCK_MAX_SIZE % BYTE_GROUP_SIZE == 0);
+    assert!(VERTEX_BLOCK_MAX_SIZE.is_multiple_of(BYTE_GROUP_SIZE));
 
     let mut written_sum = 0;
 
-    for k in 0..vertex_size {
+    for (k, mut p) in last_vertex.iter().copied().enumerate().take(vertex_size) {
         let mut vertex_offset = k;
-        let mut p = last_vertex[k];
 
-        for i in 0..vertex_count {
-            buffer[i] = zigzag8(vertex_data[vertex_offset].wrapping_sub(p));
+        for b in buffer.iter_mut().take(vertex_count) {
+            *b = zigzag8(vertex_data[vertex_offset].wrapping_sub(p));
 
             p = vertex_data[vertex_offset];
 
@@ -233,7 +232,7 @@ where
 
     match bitslog2 {
         0 => {
-            buffer.write(&[0; BYTE_GROUP_SIZE]).unwrap();
+            buffer.write_all(&[0; BYTE_GROUP_SIZE]).unwrap();
         }
         1 => {
             let mut data_var_pos = data_pos + 4;
@@ -262,18 +261,18 @@ where
             data.set_position(data_var_pos);
         }
         3 => {
-            data.read(&mut buf).unwrap();
-            buffer.write(&buf).unwrap();
+            data.read_exact(&mut buf).unwrap();
+            buffer.write_all(&buf).unwrap();
         }
         _ => unreachable!("Unexpected bit length"), // unreachable since bitslog2 is a 2-bit value
     }
 }
 
 fn decode_bytes(data: &mut Cursor<&[u8]>, buffer: &mut [u8]) -> Result<(), DecodeError> {
-    assert!(buffer.len() % BYTE_GROUP_SIZE == 0);
+    assert!(buffer.len().is_multiple_of(BYTE_GROUP_SIZE));
 
     // round number of groups to 4 to get number of header bytes
-    let header_size = (buffer.len() / BYTE_GROUP_SIZE + 3) / 4;
+    let header_size = (buffer.len() / BYTE_GROUP_SIZE).div_ceil(4);
 
     let raw_data = &data.get_ref()[data.position() as usize..];
 
@@ -318,15 +317,13 @@ fn decode_vertex_block(
 
     let vertex_count_aligned = (vertex_count + BYTE_GROUP_SIZE - 1) & !(BYTE_GROUP_SIZE - 1);
 
-    for k in 0..vertex_size {
+    for (k, mut p) in last_vertex.iter().copied().enumerate().take(vertex_size) {
         decode_bytes(data, &mut buffer[0..vertex_count_aligned])?;
 
         let mut vertex_offset = k;
 
-        let mut p = last_vertex[k];
-
-        for i in 0..vertex_count {
-            let v = unzigzag8(buffer[i]).wrapping_add(p);
+        for b in buffer.iter().take(vertex_count) {
+            let v = unzigzag8(*b).wrapping_add(p);
 
             transposed[vertex_offset] = v;
             p = v;
@@ -362,7 +359,7 @@ pub fn encode_vertex_buffer<Vertex>(
     let vertex_size = std::mem::size_of::<Vertex>();
 
     assert!(vertex_size > 0 && vertex_size <= 256);
-    assert!(vertex_size % 4 == 0);
+    assert!(vertex_size.is_multiple_of(4));
 
     let vertex_data = as_bytes(vertices);
 
@@ -375,7 +372,7 @@ pub fn encode_vertex_buffer<Vertex>(
 
     let version: u8 = version.into();
 
-    let mut written_sum = write_byte(&mut data, (VERTEX_HEADER | version) as u8);
+    let mut written_sum = write_byte(&mut data, VERTEX_HEADER | version);
 
     let mut first_vertex = [0; 256];
     if !vertices.is_empty() {
@@ -397,7 +394,7 @@ pub fn encode_vertex_buffer<Vertex>(
         };
 
         let written = encode_vertex_block(
-            &mut data,
+            data,
             &vertex_data[vertex_offset * vertex_size..],
             block_size,
             vertex_size,
@@ -435,12 +432,12 @@ pub fn encode_vertex_buffer<Vertex>(
 /// Returns worst case size requirement for [encode_vertex_buffer].
 pub fn encode_vertex_buffer_bound(vertex_count: usize, vertex_size: usize) -> usize {
     assert!(vertex_size > 0 && vertex_size <= 256);
-    assert!(vertex_size % 4 == 0);
+    assert!(vertex_size.is_multiple_of(4));
 
     let vertex_block_size = get_vertex_block_size(vertex_size);
-    let vertex_block_count = (vertex_count + vertex_block_size - 1) / vertex_block_size;
+    let vertex_block_count = vertex_count.div_ceil(vertex_block_size);
 
-    let vertex_block_header_size = (vertex_block_size / BYTE_GROUP_SIZE + 3) / 4;
+    let vertex_block_header_size = (vertex_block_size / BYTE_GROUP_SIZE).div_ceil(4);
     let vertex_block_data_size = vertex_block_size;
 
     let tail_size = vertex_size.max(TAIL_MAX_SIZE);
@@ -462,7 +459,7 @@ pub fn decode_vertex_buffer<Vertex>(destination: &mut [Vertex], buffer: &[u8]) -
     let vertex_count = destination.len();
 
     assert!(vertex_size > 0 && vertex_size <= 256);
-    assert!(vertex_size % 4 == 0);
+    assert!(vertex_size.is_multiple_of(4));
 
     let vertex_data = as_mut_bytes(destination);
 

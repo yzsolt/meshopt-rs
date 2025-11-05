@@ -24,7 +24,13 @@ const CODE_AUX_ENCODING_TABLE: [u8; 16] = [
 ];
 
 fn rotate_triangle(b: u32, c: u32, next: u32) -> i32 {
-    if b == next { 1 } else { if c == next { 2 } else { 0 } }
+    if b == next {
+        1
+    } else if c == next {
+        2
+    } else {
+        0
+    }
 }
 
 fn get_edge_fifo(fifo: &EdgeFifo, a: u32, b: u32, c: u32, offset: usize) -> i32 {
@@ -116,7 +122,7 @@ where
 ///
 /// * `buffer`: must contain enough space for the encoded index buffer (use [encode_index_buffer_bound] to compute worst case size)
 pub fn encode_index_buffer(mut buffer: &mut [u8], indices: &[u32], version: IndexEncodingVersion) -> Option<usize> {
-    assert!(indices.len() % 3 == 0);
+    assert!(indices.len().is_multiple_of(3));
 
     let buffer_len = buffer.len();
 
@@ -175,13 +181,11 @@ pub fn encode_index_buffer(mut buffer: &mut [u8], indices: &[u32], version: Inde
 
             let mut fec = if fc >= 1 && fc < fecmax {
                 fc
+            } else if c == next {
+                next += 1;
+                0
             } else {
-                if c == next {
-                    next += 1;
-                    0
-                } else {
-                    15
-                }
+                15
             };
 
             if fec == 15 && version >= 1 {
@@ -242,25 +246,21 @@ pub fn encode_index_buffer(mut buffer: &mut [u8], indices: &[u32], version: Inde
             } else {
                 15
             };
-            let feb = if fb >= 0 && fb < 14 {
+            let feb = if (0..14).contains(&fb) {
                 fb + 1
+            } else if b == next {
+                next += 1;
+                0
             } else {
-                if b == next {
-                    next += 1;
-                    0
-                } else {
-                    15
-                }
+                15
             };
-            let fec = if fc >= 0 && fc < 14 {
+            let fec = if (0..14).contains(&fc) {
                 fc + 1
+            } else if c == next {
+                next += 1;
+                0
             } else {
-                if c == next {
-                    next += 1;
-                    0
-                } else {
-                    15
-                }
+                15
             };
 
             // we encode feb & fec in 4 bits using a table if possible, and as a full byte otherwise
@@ -268,7 +268,7 @@ pub fn encode_index_buffer(mut buffer: &mut [u8], indices: &[u32], version: Inde
             let codeauxindex = get_code_aux_index(codeaux, &codeaux_table);
 
             // <14 encodes an index into codeaux table, 14 encodes fea=0, 15 encodes fea=15
-            if fea == 0 && codeauxindex >= 0 && codeauxindex < 14 && !reset {
+            if fea == 0 && (0..14).contains(&codeauxindex) && !reset {
                 write_byte(&mut code, ((15 << 4) | codeauxindex) as u8);
             } else {
                 write_byte(&mut code, ((15 << 4) | 14 | fea) as u8);
@@ -337,17 +337,17 @@ pub fn encode_index_buffer(mut buffer: &mut [u8], indices: &[u32], version: Inde
 
 /// Returns worst case size requirement for [encode_index_buffer].
 pub fn encode_index_buffer_bound(index_count: usize, vertex_count: usize) -> usize {
-    assert_eq!(index_count % 3, 0);
+    assert!(index_count.is_multiple_of(3));
 
     // compute number of bits required for each index
-    let mut vertex_bits = 1;
+    let mut vertex_bits: usize = 1;
 
     while vertex_bits < 32 && vertex_count > (1 << vertex_bits) {
         vertex_bits += 1;
     }
 
     // worst-case encoding is 2 header bytes + 3 varint-7 encoded index deltas
-    let vertex_groups = (vertex_bits + 1 + 6) / 7;
+    let vertex_groups = (vertex_bits + 1).div_ceil(7);
 
     1 + (index_count / 3) * (2 + 3 * vertex_groups) + 16
 }
@@ -626,7 +626,7 @@ mod test {
 
         impl From<u32> for U16 {
             fn from(index: u32) -> Self {
-                Self { 0: index as u16 }
+                Self(index as u16)
             }
         }
 

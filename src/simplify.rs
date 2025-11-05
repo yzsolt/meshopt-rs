@@ -274,6 +274,7 @@ fn classify_vertices(
     let openinc = loopback;
     let openout = loop_;
 
+    #[allow(clippy::needless_range_loop)]
     for vertex in 0..vertex_count {
         let offset = adjacency.offsets[vertex] as usize;
         let count = adjacency.counts[vertex] as usize;
@@ -818,15 +819,15 @@ fn dump_edge_collapses(collapses: &[Collapse], vertex_kind: &[VertexKind]) {
     let mut ckinds = [[0usize; KIND_COUNT]; KIND_COUNT];
     let mut cerrors = [[f32::MAX; KIND_COUNT]; KIND_COUNT];
 
-    for i in 0..collapses.len() {
-        let i0 = collapses[i].v0;
-        let i1 = collapses[i].v1;
+    for c in collapses {
+        let i0 = c.v0;
+        let i1 = c.v1;
 
         let k0 = vertex_kind[i0 as usize] as usize;
         let k1 = vertex_kind[i1 as usize] as usize;
 
         ckinds[k0][k1] += 1;
-        cerrors[k0][k1] = cerrors[k0][k1].min(unsafe { collapses[i].u.error });
+        cerrors[k0][k1] = cerrors[k0][k1].min(unsafe { c.u.error });
     }
 
     for k0 in 0..KIND_COUNT {
@@ -864,6 +865,7 @@ fn dump_locked_collapses(indices: &[u32], vertex_kind: &[VertexKind]) {
         }
     }
 
+    #[allow(clippy::needless_range_loop)]
     for k0 in 0..KIND_COUNT {
         for k1 in 0..KIND_COUNT {
             if locked_collapses[k0][k1] != 0 {
@@ -889,9 +891,9 @@ fn sort_edge_collapses(sort_order: &mut [u32], collapses: &[Collapse]) {
     // compute offsets based on histogram data
     let mut histogram_sum = 0;
 
-    for i in 0..(1 << SORT_BITS) {
-        let count = histogram[i];
-        histogram[i] = histogram_sum;
+    for h in &mut histogram {
+        let count = *h;
+        *h = histogram_sum;
         histogram_sum += count;
     }
 
@@ -907,6 +909,7 @@ fn sort_edge_collapses(sort_order: &mut [u32], collapses: &[Collapse]) {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn perform_edge_collapses(
     collapse_remap: &mut [u32],
     collapse_locked: &mut [bool],
@@ -945,7 +948,7 @@ fn perform_edge_collapses(
         // we limit the error in each pass based on the error of optimal last collapse; since many collapses will be locked
         // as they will share vertices with other successfull collapses, we need to increase the acceptable error by some factor
         let error_goal = if edge_collapse_goal < collapses.len() {
-            1.5 * unsafe { collapses[collapse_order[edge_collapse_goal as usize] as usize].u.error }
+            1.5 * unsafe { collapses[collapse_order[edge_collapse_goal] as usize].u.error }
         } else {
             f32::MAX
         };
@@ -1061,7 +1064,7 @@ fn remap_edge_loops(loop_: &mut [u32], collapse_remap: &[u32]) {
 }
 
 fn compute_vertex_ids(vertex_ids: &mut [u32], vertex_positions: &[Vector3], grid_size: i32) {
-    assert!(grid_size >= 1 && grid_size <= 1024);
+    assert!((1..=1024).contains(&grid_size));
     let cell_scale = (grid_size - 1) as f32;
 
     for (pos, id) in vertex_positions.iter().zip(vertex_ids.iter_mut()) {
@@ -1120,7 +1123,7 @@ fn count_vertex_cells(table: &mut HashMap<u32, u32, hash::BuildIdHasher>, vertex
                 0
             }
             Entry::Vacant(entry) => {
-                entry.insert(*id as u32);
+                entry.insert(*id);
                 1
             }
         };
@@ -1218,7 +1221,11 @@ fn filter_triangles(
 
             destination[result * 3..result * 3 + 3].copy_from_slice(&abc);
 
-            let p = hash::VertexPosition(unsafe { std::mem::transmute(abc) });
+            let p = hash::VertexPosition([
+                f32::from_bits(abc[0]),
+                f32::from_bits(abc[1]),
+                f32::from_bits(abc[2]),
+            ]);
 
             match tritable.entry(p) {
                 Entry::Occupied(_entry) => {}
@@ -1297,8 +1304,8 @@ where
     #[cfg(feature = "trace")]
     {
         let mut unique_positions = 0;
-        for i in 0..vertices.len() {
-            unique_positions += (remap[i] as usize == i) as u32;
+        for (i, remapped) in remap.iter().enumerate().take(vertices.len()) {
+            unique_positions += (*remapped as usize == i) as u32;
         }
 
         println!(
@@ -1433,7 +1440,7 @@ where
     );
 
     #[cfg(feature = "trace")]
-    dump_locked_collapses(&result, &vertex_kind);
+    dump_locked_collapses(result, &vertex_kind);
 
     // result_error is quadratic; we need to remap it back to linear
     if let Some(result_error) = result_error {
@@ -1514,20 +1521,22 @@ where
         let mut grid_size = next_grid_size;
         grid_size = if grid_size <= min_grid {
             min_grid + 1
+        } else if grid_size >= max_grid {
+            max_grid - 1
         } else {
-            if grid_size >= max_grid { max_grid - 1 } else { grid_size }
+            grid_size
         };
 
         compute_vertex_ids(&mut vertex_ids, &vertex_positions, grid_size);
-        let triangles = count_triangles(&vertex_ids, &indices);
+        let triangles = count_triangles(&vertex_ids, indices);
 
         #[cfg(feature = "trace")]
         println!(
             "pass {pass} ({}): grid size {grid_size}, triangles {triangles}, {}",
-            if pass == 0 {
-                "guess"
-            } else {
-                if pass <= INTERPOLATION_PASSES { "lerp" } else { "binary" }
+            match pass {
+                0 => "guess",
+                1..=INTERPOLATION_PASSES => "lerp",
+                _ => "binary",
             },
             if triangles <= target_index_count / 3 {
                 "under"
@@ -1582,7 +1591,7 @@ where
     // build a quadric for each target cell
     let mut cell_quadrics = vec![Quadric::default(); cell_count];
 
-    fill_cell_quadrics(&mut cell_quadrics, &indices, &vertex_positions, &vertex_cells);
+    fill_cell_quadrics(&mut cell_quadrics, indices, &vertex_positions, &vertex_cells);
 
     // for each target cell, find the vertex with the minimal error
     let mut cell_remap = vec![INVALID_INDEX; cell_count];
@@ -1600,7 +1609,7 @@ where
     // note that we need to filter out triangles that we've already output because we very frequently generate redundant triangles between cells :(
     let mut tritable = HashMap::with_capacity_and_hasher(min_triangles, hash::BuildPositionHasher::default());
 
-    let write = filter_triangles(destination, &mut tritable, &indices, &vertex_cells, &cell_remap);
+    let write = filter_triangles(destination, &mut tritable, indices, &vertex_cells, &cell_remap);
     assert!(write <= target_index_count);
 
     #[cfg(feature = "trace")]
@@ -1670,8 +1679,10 @@ where
         let mut grid_size = next_grid_size;
         grid_size = if grid_size <= min_grid {
             min_grid + 1
+        } else if grid_size >= max_grid {
+            max_grid - 1
         } else {
-            if grid_size >= max_grid { max_grid - 1 } else { grid_size }
+            grid_size
         };
 
         compute_vertex_ids(&mut vertex_ids, &vertex_positions, grid_size);
@@ -1679,13 +1690,13 @@ where
 
         #[cfg(feature = "trace")]
         println!(
-            "pass {pass} ({}): grid size {grid_size}, vertices {vertices}, {}",
-            if pass == 0 {
-                "guess"
-            } else {
-                if pass <= INTERPOLATION_PASSES { "lerp" } else { "binary" }
+            "pass {pass} ({}): grid size {grid_size}, triangles {vertices}, {}",
+            match pass {
+                0 => "guess",
+                1..=INTERPOLATION_PASSES => "lerp",
+                _ => "binary",
             },
-            if vertices <= target_vertex_count {
+            if vertices <= target_vertex_count / 3 {
                 "under"
             } else {
                 "over"

@@ -1,3 +1,5 @@
+#![allow(clippy::identity_op)]
+
 use meshopt_rs::index::buffer::*;
 use meshopt_rs::index::generator::*;
 use meshopt_rs::index::*;
@@ -77,9 +79,9 @@ impl Mesh {
         let mut vertices = Vec::new();
         let mut indices = Vec::new();
 
-        for (_, model) in models.iter().enumerate() {
+        for model in models.iter() {
             let mesh = &model.mesh;
-            assert!(mesh.positions.len() % 3 == 0);
+            assert!(mesh.positions.len().is_multiple_of(3));
 
             vertices.reserve(mesh.indices.len());
             indices.extend_from_slice(&mesh.indices);
@@ -135,7 +137,7 @@ impl Mesh {
     }
 
     pub fn is_valid(&self) -> bool {
-        if self.indices.len() % 3 != 0 {
+        if !self.indices.len().is_multiple_of(3) {
             return false;
         }
 
@@ -200,7 +202,7 @@ impl Mesh {
                     std::slice::from_raw_parts(v.as_ptr() as *const u8, std::mem::size_of::<Vertex>() * v.len())
                 };
 
-                let hash = Self::hash_range(&data);
+                let hash = Self::hash_range(data);
 
                 h1 ^= hash;
                 h2 = h2.wrapping_add(hash);
@@ -405,7 +407,7 @@ fn compress_data<T>(data: &[T]) -> usize {
     );
     let mut compressor = CompressorOxide::new(flags);
 
-    let src = unsafe { std::slice::from_raw_parts(data.as_ptr() as *const u8, std::mem::size_of::<T>() * data.len()) };
+    let src = unsafe { std::slice::from_raw_parts(data.as_ptr() as *const u8, std::mem::size_of_val(data)) };
 
     // Taken from miniz.c as miniz_oxide has no equivalent function
     let bound = (128 + (src.len() * 110) / 100).max(128 + src.len() + ((src.len() / (31 * 1024)) + 1) * 5);
@@ -471,7 +473,7 @@ fn encode_index_sequence1(data: &[u32], vertex_count: usize, desc: char) {
     let start = Instant::now();
 
     let mut buffer = vec![0; encode_index_sequence_bound(data.len(), vertex_count)];
-    let size = encode_index_sequence(&mut buffer, &data, IndexEncodingVersion::default());
+    let size = encode_index_sequence(&mut buffer, data, IndexEncodingVersion::default());
     buffer.resize(size, 0);
 
     let encode = start.elapsed();
@@ -534,7 +536,7 @@ where
     let start = Instant::now();
 
     let mut vbuf = vec![0; encode_vertex_buffer_bound(pv.len(), std::mem::size_of::<PV>())];
-    let vb_size = encode_vertex_buffer(&mut vbuf, &pv, VertexEncodingVersion::default()).unwrap();
+    let vb_size = encode_vertex_buffer(&mut vbuf, pv, VertexEncodingVersion::default()).unwrap();
     vbuf.resize(vb_size, 0);
 
     let encode = start.elapsed();
@@ -681,7 +683,7 @@ fn simplify_mesh_complete(mesh: &Mesh) {
     lods[0] = mesh.indices.clone();
 
     for i in 1..LOD_COUNT {
-        let (source, mut lod) = {
+        let (source, lod) = {
             let (s, l) = lods.split_at_mut(i);
             (s.last_mut().unwrap(), l.first_mut().unwrap())
         };
@@ -698,14 +700,7 @@ fn simplify_mesh_complete(mesh: &Mesh) {
         }
 
         lod.resize(source.len(), Default::default());
-        let size = simplify(
-            &mut lod,
-            &source,
-            &mesh.vertices,
-            target_index_count,
-            target_error,
-            None,
-        );
+        let size = simplify(lod, source, &mesh.vertices, target_index_count, target_error, None);
         lod.resize(size, Default::default());
     }
 
@@ -981,7 +976,7 @@ fn meshlets(mesh: &Mesh, scan: bool) {
 
         // trivial accept: we can't ever backface cull this meshlet
         accepted += (bounds.cone_cutoff >= 1.0) as usize;
-        accepted_s8 += (bounds.cone_cutoff_s8 >= 127) as usize;
+        accepted_s8 += (bounds.cone_cutoff_s8 == 127) as usize;
 
         // perspective projection: dot(normalize(cone_apex - camera_position), cone_axis) > cone_cutoff
         let mview = [
@@ -1146,7 +1141,7 @@ where
 
     for model in models.iter() {
         let mesh = &model.mesh;
-        assert!(mesh.positions.len() % 3 == 0);
+        assert!(mesh.positions.len().is_multiple_of(3));
 
         for i in 0..mesh.indices.len() {
             let pi = mesh.indices[i] as usize;
@@ -1300,7 +1295,7 @@ fn process(mesh: &Mesh) {
     strip.resize(size, 0);
 
     #[cfg(feature = "experimental")]
-    encode_index_sequence1(&mut strip, copystrip.vertices.len(), 'D');
+    encode_index_sequence1(&strip, copystrip.vertices.len(), 'D');
 
     pack_vertex(&copy);
     encode_vertex(&copy);
@@ -1320,7 +1315,7 @@ fn process(mesh: &Mesh) {
 
 fn process_dev(#[allow(unused)] mesh: &Mesh) {
     #[cfg(feature = "experimental")]
-    tessellation_adjacency(&mesh);
+    tessellation_adjacency(mesh);
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
