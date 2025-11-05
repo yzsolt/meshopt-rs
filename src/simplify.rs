@@ -2,6 +2,8 @@
 
 use crate::INVALID_INDEX;
 use crate::Vector3;
+use crate::hash::BuildNoopHasher;
+use crate::simplify::hash::VertexId;
 use crate::util::zero_inverse;
 use crate::vertex::{Position, calc_pos_extents};
 
@@ -88,13 +90,13 @@ fn update_edge_adjacency(adjacency: &mut EdgeAdjacency, indices: &[u32], remap: 
 }
 
 mod hash {
-    use std::hash::{BuildHasherDefault, Hash, Hasher};
+    use std::hash::{Hash, Hasher};
 
     #[derive(Clone)]
     pub struct VertexPosition(pub [f32; 3]);
 
     impl VertexPosition {
-        const BYTES: usize = 3 * std::mem::size_of::<f32>();
+        const BYTES: usize = std::mem::size_of::<Self>();
 
         fn as_bytes(&self) -> &[u8] {
             let bytes: &[u8; Self::BYTES] = unsafe { std::mem::transmute(&self.0) };
@@ -104,7 +106,16 @@ mod hash {
 
     impl Hash for VertexPosition {
         fn hash<H: Hasher>(&self, state: &mut H) {
-            state.write(self.as_bytes());
+            let [x, y, z] = self.0;
+            let [x, y, z] = [f32::to_bits(x), f32::to_bits(y), f32::to_bits(z)];
+
+            // scramble bits to make sure that integer coordinates have entropy in lower bits
+            let x = x ^ (x >> 17);
+            let y = y ^ (y >> 17);
+            let z = z ^ (z >> 17);
+
+            // Optimized Spatial Hashing for Collision Detection of Deformable Objects
+            state.write_u32((x.wrapping_mul(73856093)) ^ (y.wrapping_mul(19349663)) ^ (z.wrapping_mul(83492791)));
         }
     }
 
@@ -116,67 +127,28 @@ mod hash {
 
     impl Eq for VertexPosition {}
 
-    #[derive(Default)]
-    pub struct PositionHasher {
-        state: u64,
-    }
+    #[derive(PartialEq, Eq, Clone, Copy, Default)]
+    pub struct VertexId(pub u32);
 
-    impl Hasher for PositionHasher {
-        fn write(&mut self, bytes: &[u8]) {
-            assert!(bytes.len() == VertexPosition::BYTES);
-
-            let a = u32::from_ne_bytes((&bytes[0..4]).try_into().unwrap());
-            let b = u32::from_ne_bytes((&bytes[4..8]).try_into().unwrap());
-            let c = u32::from_ne_bytes((&bytes[8..12]).try_into().unwrap());
-
-            // scramble bits to make sure that integer coordinates have entropy in lower bits
-            let x = a ^ (a >> 17);
-            let y = b ^ (b >> 17);
-            let z = c ^ (c >> 17);
-
-            // Optimized Spatial Hashing for Collision Detection of Deformable Objects
-            self.state = ((x.wrapping_mul(73856093)) ^ (y.wrapping_mul(19349663)) ^ (z.wrapping_mul(83492791))) as u64;
-        }
-
-        fn finish(&self) -> u64 {
-            self.state
-        }
-    }
-
-    pub type BuildPositionHasher = BuildHasherDefault<PositionHasher>;
-
-    #[derive(Default)]
-    pub struct IdHasher {
-        state: u64,
-    }
-
-    impl Hasher for IdHasher {
-        fn write(&mut self, bytes: &[u8]) {
-            assert!(bytes.len() == std::mem::size_of::<u32>());
-
-            let mut h = u32::from_ne_bytes((&bytes[0..4]).try_into().unwrap());
+    impl Hash for VertexId {
+        fn hash<H: Hasher>(&self, state: &mut H) {
+            let mut h = self.0;
 
             // MurmurHash2 finalizer
             h ^= h >> 13;
             h = h.wrapping_mul(0x5bd1e995);
             h ^= h >> 15;
 
-            self.state = h as u64;
-        }
-
-        fn finish(&self) -> u64 {
-            self.state
+            state.write_u32(h);
         }
     }
-
-    pub type BuildIdHasher = BuildHasherDefault<IdHasher>;
 }
 
 fn build_position_remap<Vertex>(remap: &mut [u32], wedge: &mut [u32], vertices: &[Vertex])
 where
     Vertex: Position,
 {
-    let mut table = HashMap::with_capacity_and_hasher(vertices.len(), hash::BuildPositionHasher::default());
+    let mut table = HashMap::with_capacity_and_hasher(vertices.len(), BuildNoopHasher::default());
 
     // build forward remap: for each vertex, which other (canonical) vertex does it map to?
     // we use position equivalence for this, and remap vertices to other existing vertices
@@ -1068,7 +1040,7 @@ fn remap_edge_loops(loop_: &mut [u32], collapse_remap: &[u32]) {
     }
 }
 
-fn compute_vertex_ids(vertex_ids: &mut [u32], vertex_positions: &[Vector3], grid_size: i32) {
+fn compute_vertex_ids(vertex_ids: &mut [VertexId], vertex_positions: &[Vector3], grid_size: i32) {
     assert!((1..=1024).contains(&grid_size));
     let cell_scale = (grid_size - 1) as f32;
 
@@ -1077,11 +1049,11 @@ fn compute_vertex_ids(vertex_ids: &mut [u32], vertex_positions: &[Vector3], grid
         let yi = (pos.y * cell_scale + 0.5) as i32;
         let zi = (pos.z * cell_scale + 0.5) as i32;
 
-        *id = ((xi << 20) | (yi << 10) | zi) as u32;
+        *id = VertexId(((xi << 20) | (yi << 10) | zi) as u32);
     }
 }
 
-fn count_triangles(vertex_ids: &[u32], indices: &[u32]) -> usize {
+fn count_triangles(vertex_ids: &[VertexId], indices: &[u32]) -> usize {
     let mut result = 0;
 
     for abc in indices.chunks_exact(3) {
@@ -1096,9 +1068,9 @@ fn count_triangles(vertex_ids: &[u32], indices: &[u32]) -> usize {
 }
 
 fn fill_vertex_cells(
-    table: &mut HashMap<u32, u32, hash::BuildIdHasher>,
+    table: &mut HashMap<VertexId, u32, BuildNoopHasher>,
     vertex_cells: &mut [u32],
-    vertex_ids: &[u32],
+    vertex_ids: &[VertexId],
 ) -> usize {
     let mut result: usize = 0;
 
@@ -1116,7 +1088,7 @@ fn fill_vertex_cells(
     result
 }
 
-fn count_vertex_cells(table: &mut HashMap<u32, u32, hash::BuildIdHasher>, vertex_ids: &[u32]) -> usize {
+fn count_vertex_cells(table: &mut HashMap<VertexId, u32, BuildNoopHasher>, vertex_ids: &[VertexId]) -> usize {
     table.clear();
 
     let mut result = 0;
@@ -1124,11 +1096,11 @@ fn count_vertex_cells(table: &mut HashMap<u32, u32, hash::BuildIdHasher>, vertex
     for id in vertex_ids {
         result += match table.entry(*id) {
             Entry::Occupied(mut entry) => {
-                *entry.get_mut() = *id;
+                *entry.get_mut() = id.0;
                 0
             }
             Entry::Vacant(entry) => {
-                entry.insert(*id);
+                entry.insert(id.0);
                 1
             }
         };
@@ -1199,7 +1171,7 @@ fn fill_cell_remap(
 
 fn filter_triangles(
     destination: &mut [u32],
-    tritable: &mut HashMap<hash::VertexPosition, u32, hash::BuildPositionHasher>,
+    tritable: &mut HashMap<hash::VertexPosition, u32, BuildNoopHasher>,
     indices: &[u32],
     vertex_cells: &[u32],
     cell_remap: &[u32],
@@ -1498,7 +1470,7 @@ where
         );
     }
 
-    let mut vertex_ids = vec![0; vertices.len()];
+    let mut vertex_ids = vec![VertexId::default(); vertices.len()];
 
     const INTERPOLATION_PASSES: i32 = 5;
 
@@ -1586,7 +1558,7 @@ where
     }
 
     // build vertex->cell association by mapping all vertices with the same quantized position to the same cell
-    let mut table = HashMap::with_capacity_and_hasher(vertices.len(), hash::BuildIdHasher::default());
+    let mut table = HashMap::with_capacity_and_hasher(vertices.len(), BuildNoopHasher::default());
 
     let mut vertex_cells = vec![0; vertices.len()];
 
@@ -1612,7 +1584,7 @@ where
 
     // collapse triangles!
     // note that we need to filter out triangles that we've already output because we very frequently generate redundant triangles between cells :(
-    let mut tritable = HashMap::with_capacity_and_hasher(min_triangles, hash::BuildPositionHasher::default());
+    let mut tritable = HashMap::with_capacity_and_hasher(min_triangles, BuildNoopHasher::default());
 
     let write = filter_triangles(destination, &mut tritable, indices, &vertex_cells, &cell_remap);
     assert!(write <= target_index_count);
@@ -1661,9 +1633,9 @@ where
         println!("target: {target_cell_count} cells");
     }
 
-    let mut vertex_ids = vec![0; vertices.len()];
+    let mut vertex_ids = vec![VertexId::default(); vertices.len()];
 
-    let mut table = HashMap::with_capacity_and_hasher(vertices.len(), hash::BuildIdHasher::default());
+    let mut table = HashMap::with_capacity_and_hasher(vertices.len(), BuildNoopHasher::default());
 
     const INTERPOLATION_PASSES: i32 = 5;
 

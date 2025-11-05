@@ -22,8 +22,8 @@ impl Hasher for VertexHasher {
 
         let mut h = self.state;
 
-        for k4 in bytes.chunks_exact(4) {
-            let mut k = u32::from_ne_bytes(k4.try_into().unwrap());
+        for k4 in bytes.as_chunks().0 {
+            let mut k = u32::from_ne_bytes(*k4);
 
             k = k.wrapping_mul(M);
             k ^= k >> R;
@@ -72,24 +72,6 @@ mod experimental {
             state.write_u32(h2);
         }
     }
-
-    #[derive(Default)]
-    pub struct NoopEdgeHasher {
-        state: u32,
-    }
-
-    impl Hasher for NoopEdgeHasher {
-        fn write(&mut self, bytes: &[u8]) {
-            debug_assert_eq!(bytes.len(), 4);
-            self.state = u32::from_ne_bytes(bytes.try_into().unwrap());
-        }
-
-        fn finish(&self) -> u64 {
-            self.state as u64
-        }
-    }
-
-    pub type BuildNoopEdgeHasher = BuildHasherDefault<NoopEdgeHasher>;
 }
 
 fn generate_vertex_remap_inner<Vertex, Lookup>(
@@ -333,6 +315,7 @@ fn build_position_remap(indices: &[u32], vertices: &Stream) -> Vec<u32> {
 /// * `destination`: must contain enough space for the resulting index buffer (`indices.len() * 4` elements)
 #[cfg(feature = "experimental")]
 pub fn generate_tessellation_index_buffer(destination: &mut [u32], indices: &[u32], vertices: &Stream) {
+    use crate::hash::BuildNoopHasher;
     use experimental::*;
 
     assert_eq!(indices.len() % 3, 0);
@@ -344,7 +327,7 @@ pub fn generate_tessellation_index_buffer(destination: &mut [u32], indices: &[u3
     let remap = build_position_remap(indices, vertices);
 
     // build edge set; this stores all triangle edges but we can look these up by any other wedge
-    let mut edge_table = HashMap::with_capacity_and_hasher(indices.len(), BuildNoopEdgeHasher::default());
+    let mut edge_table = HashMap::with_capacity_and_hasher(indices.len(), BuildNoopHasher::default());
 
     for i in indices.chunks_exact(3) {
         for e in 0..3 {
@@ -402,6 +385,7 @@ pub fn generate_tessellation_index_buffer(destination: &mut [u32], indices: &[u3
 /// * `destination`: must contain enough space for the resulting index buffer (`indices.len() * 2` elements)
 #[cfg(feature = "experimental")]
 pub fn generate_adjacency_index_buffer(destination: &mut [u32], indices: &[u32], vertices: &Stream) {
+    use crate::hash::BuildNoopHasher;
     use experimental::*;
 
     assert_eq!(indices.len() % 3, 0);
@@ -413,7 +397,7 @@ pub fn generate_adjacency_index_buffer(destination: &mut [u32], indices: &[u32],
     let remap = build_position_remap(indices, vertices);
 
     // build edge set; this stores all triangle edges but we can look these up by any other wedge
-    let mut edge_vertex_table = HashMap::with_capacity_and_hasher(indices.len(), BuildNoopEdgeHasher::default());
+    let mut edge_vertex_table = HashMap::with_capacity_and_hasher(indices.len(), BuildNoopHasher::default());
 
     for i in indices.chunks_exact(3) {
         for e in 0..3 {
