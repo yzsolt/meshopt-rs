@@ -11,21 +11,17 @@ pub enum DecodeError {
     UnexpectedEof,
 }
 
+#[derive(Default)]
 pub enum VertexEncodingVersion {
     /// Decodable by all versions
+    #[default]
     V0,
 }
 
-impl Default for VertexEncodingVersion {
-    fn default() -> Self {
-        Self::V0
-    }
-}
-
-impl Into<u8> for VertexEncodingVersion {
-    fn into(self) -> u8 {
-        match self {
-            Self::V0 => 0,
+impl From<VertexEncodingVersion> for u8 {
+    fn from(value: VertexEncodingVersion) -> Self {
+        match value {
+            VertexEncodingVersion::V0 => 0,
         }
     }
 }

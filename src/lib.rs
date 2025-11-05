@@ -4,6 +4,9 @@
 //!
 //! * `experimental`: Enables experimental APIs which have unstable interface and might have implementation that's not fully tested or optimized
 
+#![allow(clippy::identity_op)]
+#![allow(clippy::erasing_op)]
+
 #[cfg(feature = "experimental")]
 pub mod cluster;
 pub mod index;
@@ -113,6 +116,10 @@ impl<'a> Stream<'a> {
     /// Returns length of the stream in value groups.
     pub fn len(&self) -> usize {
         self.data.len() / self.stride
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.data.is_empty()
     }
 }
 

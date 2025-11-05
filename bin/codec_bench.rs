@@ -1,3 +1,5 @@
+#![allow(clippy::identity_op)]
+
 use meshopt_rs::index::IndexEncodingVersion;
 use meshopt_rs::index::buffer::{decode_index_buffer, encode_index_buffer, encode_index_buffer_bound};
 use meshopt_rs::vertex::Position;
@@ -46,19 +48,19 @@ fn bench_codecs(vertices: &[Vertex], indices: &[u32], bestvd: &mut f64, bestid: 
     if verbose {
         println!(
             "source: vertex data {} bytes, index data {} bytes",
-            vertices.len() * std::mem::size_of::<Vertex>(),
+            std::mem::size_of_val(vertices),
             indices.len() * 4
         );
     }
 
     for pass in 0..if verbose { 2 } else { 1 } {
         if pass == 1 {
-            optimize_vertex_cache_strip(&mut ib, &indices, vertices.len());
+            optimize_vertex_cache_strip(&mut ib, indices, vertices.len());
         } else {
-            optimize_vertex_cache(&mut ib, &indices, vertices.len());
+            optimize_vertex_cache(&mut ib, indices, vertices.len());
         }
 
-        optimize_vertex_fetch(&mut vb, &mut ib, &vertices);
+        optimize_vertex_fetch(&mut vb, &mut ib, vertices);
 
         vc.resize_with(vc.capacity(), Default::default);
         let vc_size = encode_vertex_buffer(&mut vc, &vb, VertexEncodingVersion::V0).unwrap();
@@ -95,7 +97,7 @@ fn bench_codecs(vertices: &[Vertex], indices: &[u32], bestvd: &mut f64, bestid: 
             let vertex_time = (t1 - t0).as_secs_f64();
             let index_time = (t2 - t1).as_secs_f64();
 
-            let vertex_throughput = (vertices.len() * std::mem::size_of::<Vertex>()) as f64 / GB / vertex_time;
+            let vertex_throughput = std::mem::size_of_val(vertices) as f64 / GB / vertex_time;
             let index_throughput = (indices.len() * 4) as f64 / GB / index_time;
 
             if verbose {
@@ -197,7 +199,7 @@ fn main() {
 
     let mut vertices = Vec::with_capacity(((N + 1) * (N + 1)) as usize);
 
-    let verbose = std::env::args().find(|a| a == "-v").is_some();
+    let verbose = std::env::args().any(|a| a == "-v");
 
     for x in 0..=N {
         for y in 0..=N {

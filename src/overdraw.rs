@@ -115,11 +115,9 @@ fn rasterize(buffer: &mut OverdrawBuffer, mut v1: Vector3, mut v2: Vector3, mut 
             let sign = sign as usize;
 
             // check if all CXn are non-negative
-            if cx1 | cx2 | cx3 >= 0 {
-                if zx >= buffer.z[y][x][sign] {
-                    buffer.z[y][x][sign] = zx;
-                    buffer.overdraw[y][x][sign] += 1;
-                }
+            if cx1 | cx2 | cx3 >= 0 && zx >= buffer.z[y][x][sign] {
+                buffer.z[y][x][sign] = zx;
+                buffer.overdraw[y][x][sign] += 1;
             }
 
             // signed left shift is UB for negative numbers so use unsigned-signed casts
@@ -146,7 +144,7 @@ pub fn analyze_overdraw<Vertex>(indices: &[u32], vertices: &[Vertex]) -> Overdra
 where
     Vertex: Position,
 {
-    assert!(indices.len() % 3 == 0);
+    assert!(indices.len().is_multiple_of(3));
 
     let mut result = OverdrawStatistics::default();
 
@@ -329,9 +327,9 @@ fn calculate_sort_order_radix(sort_order: &mut [u32], sort_data: &[f32], sort_ke
     // compute offsets based on histogram data
     let mut histogram_sum = 0;
 
-    for i in 0..histogram.len() {
-        let count = histogram[i];
-        histogram[i] = histogram_sum;
+    for h in &mut histogram {
+        let count = *h;
+        *h = histogram_sum;
         histogram_sum += count;
     }
 
@@ -340,7 +338,7 @@ fn calculate_sort_order_radix(sort_order: &mut [u32], sort_data: &[f32], sort_ke
     // compute sort order based on offsets
     for i in 0..sort_keys.len() {
         let idx = &mut histogram[sort_keys[i] as usize];
-        sort_order[*idx as usize] = i as u32;
+        sort_order[*idx] = i as u32;
         *idx += 1;
     }
 }
@@ -376,7 +374,7 @@ fn generate_hard_boundaries(
     cache_size: u32,
     cache_timestamps: &mut [u32],
 ) -> usize {
-    let mut timestamp = cache_size as u32 + 1;
+    let mut timestamp = cache_size + 1;
 
     let face_count = indices.len() / 3;
 
@@ -553,7 +551,7 @@ where
     // sort clusters using sort data
     let mut sort_keys = vec![0u16; clusters.len()];
     let mut sort_order = vec![0u32; clusters.len()];
-    calculate_sort_order_radix(&mut sort_order, &mut sort_data, &mut sort_keys);
+    calculate_sort_order_radix(&mut sort_order, &sort_data, &mut sort_keys);
 
     // fill output buffer
     let mut offset = 0;

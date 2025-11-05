@@ -29,7 +29,7 @@ pub fn analyze_vertex_cache(
     warp_size: usize,
     primgroup_size: usize,
 ) -> VertexCacheStatistics {
-    assert!(indices.len() % 3 == 0);
+    assert!(indices.len().is_multiple_of(3));
     assert!(cache_size >= 3);
     assert!(warp_size == 0 || warp_size >= 3);
 
@@ -81,7 +81,7 @@ pub fn analyze_vertex_cache(
 
     result.warps_executed += (warp_offset > 0) as u32;
 
-    result.acmr = if indices.len() == 0 {
+    result.acmr = if indices.is_empty() {
         0.0
     } else {
         result.vertices_transformed as f32 / (indices.len() as f32 / 3.0)
@@ -92,7 +92,7 @@ pub fn analyze_vertex_cache(
         result.vertices_transformed as f32 / unique_vertex_count as f32
     };
 
-    return result;
+    result
 }
 
 const CACHE_SIZE_MAX: usize = 16;
@@ -212,10 +212,10 @@ fn optimize_vertex_cache_table(
     vertex_count: usize,
     table: &VertexScoreTable,
 ) {
-    assert!(indices.len() % 3 == 0);
+    assert!(indices.len().is_multiple_of(3));
 
     // guard for empty meshes
-    if indices.len() == 0 || vertex_count == 0 {
+    if indices.is_empty() || vertex_count == 0 {
         return;
     }
 
@@ -320,9 +320,7 @@ fn optimize_vertex_cache_table(
         let mut best_score = 0.0;
 
         // update cache positions, vertex scores and triangle scores, and find next best triangle
-        for i in 0..cache_write {
-            let index = cache[i] as usize;
-
+        for (i, index) in cache.iter().map(|index| *index as usize).enumerate().take(cache_write) {
             let cache_position = if i >= cache_size { -1 } else { i as i32 };
 
             // update vertex score
@@ -395,11 +393,11 @@ pub fn optimize_vertex_cache_strip(destination: &mut [u32], indices: &[u32], ver
 /// * `destination`: must contain enough space for the resulting index buffer (`indices.len()` elements)
 /// * `cache_size`: should be less than the actual GPU cache size to avoid cache thrashing
 pub fn optimize_vertex_cache_fifo(destination: &mut [u32], indices: &[u32], vertex_count: usize, cache_size: u32) {
-    assert!(indices.len() % 3 == 0);
+    assert!(indices.len().is_multiple_of(3));
     assert!(cache_size >= 3);
 
     // guard for empty meshes
-    if indices.len() == 0 || vertex_count == 0 {
+    if indices.is_empty() || vertex_count == 0 {
         return;
     }
 
@@ -424,7 +422,7 @@ pub fn optimize_vertex_cache_fifo(destination: &mut [u32], indices: &[u32], vert
 
     let mut current_vertex = 0;
 
-    let mut timestamp = cache_size as u32 + 1;
+    let mut timestamp = cache_size + 1;
     let mut input_cursor = 1; // vertex to restart from in case of dead-end
 
     let mut output_triangle = 0;
@@ -444,11 +442,11 @@ pub fn optimize_vertex_cache_fifo(destination: &mut [u32], indices: &[u32], vert
                 let abc = &indices[triangle * 3..triangle * 3 + 3];
 
                 // output indices
-                destination[output_triangle * 3..output_triangle * 3 + 3].copy_from_slice(&abc);
+                destination[output_triangle * 3..output_triangle * 3 + 3].copy_from_slice(abc);
                 output_triangle += 1;
 
                 // update dead-end stack
-                dead_end[dead_end_top..dead_end_top + 3].copy_from_slice(&abc);
+                dead_end[dead_end_top..dead_end_top + 3].copy_from_slice(abc);
                 dead_end_top += 3;
 
                 for i in abc {

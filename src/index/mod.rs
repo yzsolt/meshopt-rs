@@ -23,6 +23,7 @@ pub enum IndexEncodingVersion {
     V1,
 }
 
+#[allow(clippy::derivable_impls)]
 impl Default for IndexEncodingVersion {
     fn default() -> Self {
         #[cfg(not(feature = "experimental"))]
@@ -36,12 +37,12 @@ impl Default for IndexEncodingVersion {
     }
 }
 
-impl Into<u8> for IndexEncodingVersion {
-    fn into(self) -> u8 {
-        match self {
-            Self::V0 => 0,
+impl From<IndexEncodingVersion> for u8 {
+    fn from(value: IndexEncodingVersion) -> u8 {
+        match value {
+            IndexEncodingVersion::V0 => 0,
             #[cfg(feature = "experimental")]
-            Self::V1 => 1,
+            IndexEncodingVersion::V1 => 1,
         }
     }
 }

@@ -118,7 +118,7 @@ pub fn spatial_sort_triangles<Vertex>(destination: &mut [u32], indices: &[u32], 
 where
     Vertex: Position,
 {
-    assert!(indices.len() % 3 == 0);
+    assert!(indices.len().is_multiple_of(3));
 
     let face_count = indices.len() / 3;
 

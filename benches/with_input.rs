@@ -56,9 +56,9 @@ impl Mesh {
         let mut vertices = Vec::new();
         let mut indices = Vec::new();
 
-        for (_, model) in models.iter().enumerate() {
+        for model in models.iter() {
             let mesh = &model.mesh;
-            assert!(mesh.positions.len() % 3 == 0);
+            assert!(mesh.positions.len().is_multiple_of(3));
 
             vertices.reserve(mesh.indices.len());
             indices.extend_from_slice(&mesh.indices);
@@ -280,7 +280,7 @@ fn with_input(c: &mut Criterion) {
             BenchmarkId::new("decode_index_buffer", input_name),
             &encoded_indices,
             |b, encoded_indices| {
-                b.iter(|| decode_index_buffer(&mut decoded_indices, &encoded_indices).unwrap());
+                b.iter(|| decode_index_buffer(&mut decoded_indices, encoded_indices).unwrap());
             },
         );
     }
@@ -303,7 +303,7 @@ fn with_input(c: &mut Criterion) {
             |b, data| {
                 let mut buffer = vec![0; encode_index_sequence_bound(data.len(), vertex_count)];
 
-                b.iter(|| encode_index_sequence(&mut buffer, &data, IndexEncodingVersion::default()));
+                b.iter(|| encode_index_sequence(&mut buffer, data, IndexEncodingVersion::default()));
             },
         );
 
@@ -318,7 +318,7 @@ fn with_input(c: &mut Criterion) {
             BenchmarkId::new("decode_index_sequence", input_name),
             &buffer,
             |b, buffer| {
-                b.iter(|| decode_index_sequence(&mut decoded_indices, &buffer));
+                b.iter(|| decode_index_sequence(&mut decoded_indices, buffer));
             },
         );
 

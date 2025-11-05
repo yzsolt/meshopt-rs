@@ -47,7 +47,7 @@ fn find_strip_next(buffer: &[[u32; 3]], e: (u32, u32)) -> i32 {
 /// * `destination`: must contain enough space for the target index buffer, worst case can be computed with [stripify_bound]
 /// * `restart_index`: should be `INVALID_INDEX` or `0` to use degenerate triangles
 pub fn stripify(destination: &mut [u32], indices: &[u32], vertex_count: usize, restart_index: u32) -> usize {
-    assert!(indices.len() % 3 == 0);
+    assert!(indices.len().is_multiple_of(3));
 
     const BUFFER_CAPACITY: usize = 8;
 
@@ -227,7 +227,7 @@ pub fn stripify(destination: &mut [u32], indices: &[u32], vertex_count: usize, r
 
 /// Returns worst case size requirement for [stripify].
 pub fn stripify_bound(index_count: usize) -> usize {
-    assert!(index_count % 3 == 0);
+    assert!(index_count.is_multiple_of(3));
 
     // worst case without restarts is 2 degenerate indices and 3 indices per triangle
     // worst case with restarts is 1 restart index and 3 indices per triangle
