@@ -129,8 +129,13 @@ mod hash {
             let b = u32::from_ne_bytes((&bytes[4..8]).try_into().unwrap());
             let c = u32::from_ne_bytes((&bytes[8..12]).try_into().unwrap());
 
+            // scramble bits to make sure that integer coordinates have entropy in lower bits
+            let x = a ^ (a >> 17);
+            let y = b ^ (b >> 17);
+            let z = c ^ (c >> 17);
+
             // Optimized Spatial Hashing for Collision Detection of Deformable Objects
-            self.state = ((a.wrapping_mul(73856093)) ^ (b.wrapping_mul(19349663)) ^ (c.wrapping_mul(83492791))) as u64;
+            self.state = ((x.wrapping_mul(73856093)) ^ (y.wrapping_mul(19349663)) ^ (z.wrapping_mul(83492791))) as u64;
         }
 
         fn finish(&self) -> u64 {
