@@ -581,6 +581,7 @@ fn simplify_mesh(mesh: &Mesh) {
         &mesh.vertices,
         target_index_count,
         target_error,
+        SimplificationOptions::empty(),
         Some(&mut result_error),
     );
     lod.indices.resize(size, 0);
@@ -701,7 +702,15 @@ fn simplify_mesh_complete(mesh: &Mesh) {
         }
 
         lod.resize(source.len(), Default::default());
-        let size = simplify(lod, source, &mesh.vertices, target_index_count, target_error, None);
+        let size = simplify(
+            lod,
+            source,
+            &mesh.vertices,
+            target_index_count,
+            target_error,
+            SimplificationOptions::empty(),
+            None,
+        );
         lod.resize(size, Default::default());
     }
 

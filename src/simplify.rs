@@ -1,4 +1,5 @@
 //! **Experimental** mesh and point cloud simplification
+use bitflags::bitflags;
 
 use crate::INVALID_INDEX;
 use crate::Vector3;
@@ -236,6 +237,7 @@ fn has_edge(adjacency: &EdgeAdjacency, a: u32, b: u32) -> bool {
     edges.iter().any(|d| d.next == b)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn classify_vertices(
     result: &mut [VertexKind],
     loop_: &mut [u32],
@@ -244,6 +246,7 @@ fn classify_vertices(
     adjacency: &EdgeAdjacency,
     remap: &[u32],
     wedge: &[u32],
+    options: SimplificationOptions,
 ) {
     // incoming & outgoing open edges: `INVALID_INDEX` if no open edges, i if there are more than 1
     // note that this is the same data as required in loop[] arrays; loop[] data is only valid for border/seam
@@ -357,6 +360,14 @@ fn classify_vertices(
             assert!(remap[i] < i as u32);
 
             result[i] = result[remap[i] as usize];
+        }
+    }
+
+    if options.contains(SimplificationOptions::SimplifyLockBorder) {
+        for r in &mut result[0..vertex_count] {
+            if *r == VertexKind::Border {
+                *r = VertexKind::Locked;
+            }
         }
     }
 
@@ -1231,6 +1242,13 @@ fn interpolate(y: f32, x0: f32, y0: f32, x1: f32, y1: f32, x2: f32, y2: f32) -> 
     x1 + num / den
 }
 
+bitflags! {
+    pub struct SimplificationOptions: u32 {
+        /// Do not move vertices that are located on the topological border (vertices on triangle edges that don't have a paired triangle). Useful for simplifying portions of the larger mesh.
+        const SimplifyLockBorder = 1 << 0;
+    }
+}
+
 /// Reduces the number of triangles in the mesh, attempting to preserve mesh appearance as much as possible.
 ///
 /// The algorithm tries to preserve mesh topology and can stop short of the target goal based on topology constraints or target error.
@@ -1251,6 +1269,7 @@ pub fn simplify<Vertex>(
     vertices: &[Vertex],
     target_index_count: usize,
     target_error: f32,
+    options: SimplificationOptions,
     result_error: Option<&mut f32>,
 ) -> usize
 where
@@ -1283,6 +1302,7 @@ where
         &adjacency,
         &remap,
         &wedge,
+        options,
     );
 
     #[cfg(feature = "trace")]
@@ -1804,7 +1824,10 @@ mod test {
         let vb1 = vb_from_slice(&[0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]);
         let ib1 = [0, 1, 2, 0, 2, 3, 0, 3, 1, 2, 1, 3];
 
-        assert_eq!(simplify(&mut dst, &ib1, &vb1, 6, 0.001, None), 12);
+        assert_eq!(
+            simplify(&mut dst, &ib1, &vb1, 6, 0.001, SimplificationOptions::empty(), None),
+            12
+        );
 
         // 5-vertex strip can't be simplified due to topology restriction since middle triangle has flipped winding
         let vb2 = vb_from_slice(&[
@@ -1813,14 +1836,23 @@ mod test {
         let ib2 = [0, 1, 3, 3, 1, 4, 1, 2, 4]; // ok
         let ib3 = [0, 1, 3, 1, 3, 4, 1, 2, 4]; // flipped
 
-        assert_eq!(simplify(&mut dst, &ib2, &vb2, 6, 0.001, None), 6);
-        assert_eq!(simplify(&mut dst, &ib3, &vb2, 6, 0.001, None), 9);
+        assert_eq!(
+            simplify(&mut dst, &ib2, &vb2, 6, 0.001, SimplificationOptions::empty(), None),
+            6
+        );
+        assert_eq!(
+            simplify(&mut dst, &ib3, &vb2, 6, 0.001, SimplificationOptions::empty(), None),
+            9
+        );
 
         // 4-vertex quad with a locked corner can't be simplified due to border error-induced restriction
         let vb4 = vb_from_slice(&[0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 1.0, 1.0, 0.0]);
         let ib4 = [0, 1, 3, 0, 3, 2];
 
-        assert_eq!(simplify(&mut dst, &ib4, &vb4, 3, 0.001, None), 6);
+        assert_eq!(
+            simplify(&mut dst, &ib4, &vb4, 3, 0.001, SimplificationOptions::empty(), None),
+            6
+        );
 
         // 4-vertex quad with a locked corner can't be simplified due to border error-induced restriction
         let vb5 = vb_from_slice(&[
@@ -1828,7 +1860,10 @@ mod test {
         ]);
         let ib5 = [0, 1, 4, 0, 3, 2];
 
-        assert_eq!(simplify(&mut dst, &ib5, &vb5, 3, 0.001, None), 6);
+        assert_eq!(
+            simplify(&mut dst, &ib5, &vb5, 3, 0.001, SimplificationOptions::empty(), None),
+            6
+        );
     }
 
     #[test]
@@ -1903,7 +1938,10 @@ mod test {
 
         let mut dst = vec![0; ib.len()];
 
-        assert_eq!(simplify(&mut dst, &ib, &vb, 3, 1e-3, None), expected.len());
+        assert_eq!(
+            simplify(&mut dst, &ib, &vb, 3, 1e-3, SimplificationOptions::empty(), None),
+            expected.len()
+        );
         assert_eq!(&dst[0..expected.len()], expected);
     }
 
@@ -1948,7 +1986,68 @@ mod test {
 
         let mut dst = vec![0; ib.len()];
 
-        assert_eq!(simplify(&mut dst, &ib, &vb, 3, 1e-3, None), expected.len());
+        assert_eq!(
+            simplify(&mut dst, &ib, &vb, 3, 1e-3, SimplificationOptions::empty(), None),
+            expected.len()
+        );
+        assert_eq!(&dst[0..expected.len()], expected);
+    }
+
+    #[test]
+    fn test_simplify_lock_border() {
+        #[rustfmt::skip]
+        let vb = vb_from_slice(&[
+            0.000000, 0.000000, 0.000000,
+            0.000000, 1.000000, 0.000000,
+            0.000000, 2.000000, 0.000000,
+            1.000000, 0.000000, 0.000000,
+            1.000000, 1.000000, 0.000000,
+            1.000000, 2.000000, 0.000000,
+            2.000000, 0.000000, 0.000000,
+            2.000000, 1.000000, 0.000000,
+            2.000000, 2.000000, 0.000000,
+        ]);
+
+        // 0 1 2
+        // 3 4 5
+        // 6 7 8
+
+        #[rustfmt::skip]
+        let ib = [
+            0, 1, 3,
+            3, 1, 4,
+            1, 2, 4,
+            4, 2, 5,
+            3, 4, 6,
+            6, 4, 7,
+            4, 5, 7,
+            7, 5, 8,
+        ];
+
+        #[rustfmt::skip]
+        let expected = [
+            0, 1, 3,
+            1, 2, 3,
+            3, 2, 5,
+            6, 3, 7,
+            3, 5, 7,
+            7, 5, 8,
+        ];
+
+        let mut dst = vec![0; ib.len()];
+
+        assert_eq!(
+            simplify(
+                &mut dst,
+                &ib,
+                &vb,
+                3,
+                1e-3,
+                SimplificationOptions::SimplifyLockBorder,
+                None
+            ),
+            expected.len()
+        );
         assert_eq!(&dst[0..expected.len()], expected);
     }
 }
