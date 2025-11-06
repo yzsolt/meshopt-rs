@@ -1427,7 +1427,7 @@ where
     result_count
 }
 
-/// Reduces the number of triangles in the mesh, sacrificing mesh apperance for simplification performance.
+/// Reduces the number of triangles in the mesh, sacrificing mesh appearance for simplification performance.
 ///
 /// The algorithm doesn't preserve mesh topology but can stop short of the target goal based on target error.
 ///
