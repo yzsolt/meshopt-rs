@@ -145,19 +145,19 @@ fn bench_filters(
     for _ in 0..10 {
         let t0 = Instant::now();
 
-        decode_filter_oct_8(&mut d4);
+        decode_filter_oct_8(d4.iter_mut());
 
         let t1 = Instant::now();
 
-        decode_filter_oct_16(&mut d8);
+        decode_filter_oct_16(d8.iter_mut());
 
         let t2 = Instant::now();
 
-        decode_filter_quat(&mut d8);
+        decode_filter_quat(d8.iter_mut());
 
         let t3 = Instant::now();
 
-        decode_filter_exp(&mut d32);
+        decode_filter_exp(d32.iter_mut());
 
         let t4 = Instant::now();
 

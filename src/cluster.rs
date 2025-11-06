@@ -1,4 +1,4 @@
-//! **Experimental** meshlet building and cluster bounds generation
+//! Meshlet building and cluster bounds generation
 
 use crate::quantize::quantize_snorm;
 use crate::util::zero_inverse;

@@ -17,7 +17,7 @@ pub fn quantize_unorm(mut v: f32, n: i32) -> i32 {
 /// Assumes reconstruction function `q / (2^(n-1)-1)`, which is the case for fixed-function normalized fixed point conversion (except early OpenGL versions).
 ///
 /// Maximum reconstruction error: `1/2^n`
-pub fn quantize_snorm(mut v: f32, n: i32) -> i32 {
+pub fn quantize_snorm(mut v: f32, n: u32) -> i32 {
     let scale = ((1 << (n - 1)) - 1) as f32;
 
     let round = if v >= 0.0 { 0.5 } else { -0.5 };

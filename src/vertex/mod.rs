@@ -1,6 +1,7 @@
 pub mod buffer;
 pub mod cache;
 pub mod fetch;
+#[cfg(feature = "experimental")]
 pub mod filter;
 
 #[derive(Debug)]
