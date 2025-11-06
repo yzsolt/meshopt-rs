@@ -261,7 +261,14 @@ fn classify_vertices(
         for edge in edges {
             let target = edge.next;
 
-            if !has_edge(adjacency, target, vertex as u32) {
+            if target as usize == vertex {
+                // degenerate triangles have two distinct edges instead of three, and the self edge
+                // is bi-directional by definition; this can break border/seam classification by "closing"
+                // the open edge from another triangle and falsely marking the vertex as manifold
+                // instead we mark the vertex as having >1 open edges which turns it into locked/complex
+                openinc[vertex] = vertex as u32;
+                openout[vertex] = vertex as u32;
+            } else if !has_edge(adjacency, target, vertex as u32) {
                 openinc[target as usize] = if openinc[target as usize] == INVALID_INDEX {
                     vertex as u32
                 } else {
@@ -1905,5 +1912,43 @@ mod test {
         let vb = vb_from_slice(&[0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 2.0, 0.0, 0.0, 0.0, 3.0]);
 
         assert_eq!(simplify_scale(&vb), 3.0);
+    }
+
+    #[test]
+    fn test_simplify_degenerate() {
+        #[rustfmt::skip]
+        let vb = vb_from_slice(&[
+            0.000000, 0.000000, 0.000000,
+            0.000000, 1.000000, 0.000000,
+            0.000000, 2.000000, 0.000000,
+            1.000000, 0.000000, 0.000000,
+            2.000000, 0.000000, 0.000000,
+            1.000000, 1.000000, 0.000000, 
+        ]);
+
+        // 0 1 2
+        // 3 5
+        // 4
+
+        #[rustfmt::skip]
+        let ib = [
+            0, 1, 3,
+            3, 1, 5,
+            1, 2, 5,
+            3, 5, 4,
+            1, 0, 1, // these two degenerate triangles create a fake reverse edge
+            0, 3, 0, // which breaks border classification
+        ];
+
+        #[rustfmt::skip]
+        let expected = [
+            0, 1, 4,
+		    4, 1, 2,
+        ];
+
+        let mut dst = vec![0; ib.len()];
+
+        assert_eq!(simplify(&mut dst, &ib, &vb, 3, 1e-3, None), expected.len());
+        assert_eq!(&dst[0..expected.len()], expected);
     }
 }
