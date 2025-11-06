@@ -1,4 +1,4 @@
-//! **Experimental** index sequence encoding and decoding
+//! Index sequence encoding and decoding
 
 use std::io::Write;
 

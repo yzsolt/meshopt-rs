@@ -1,6 +1,5 @@
 pub mod buffer;
 pub mod generator;
-#[cfg(feature = "experimental")]
 pub mod sequence;
 
 use crate::util::{read_byte, write_byte};
@@ -15,33 +14,19 @@ pub enum DecodeError {
     UnexpectedEof,
 }
 
+#[derive(Default)]
 pub enum IndexEncodingVersion {
     /// Decodable by all versions
     V0,
     /// Decodable by 0.14+
-    #[cfg(feature = "experimental")]
+    #[default]
     V1,
-}
-
-#[allow(clippy::derivable_impls)]
-impl Default for IndexEncodingVersion {
-    fn default() -> Self {
-        #[cfg(not(feature = "experimental"))]
-        {
-            Self::V0
-        }
-        #[cfg(feature = "experimental")]
-        {
-            Self::V1
-        }
-    }
 }
 
 impl From<IndexEncodingVersion> for u8 {
     fn from(value: IndexEncodingVersion) -> u8 {
         match value {
             IndexEncodingVersion::V0 => 0,
-            #[cfg(feature = "experimental")]
             IndexEncodingVersion::V1 => 1,
         }
     }

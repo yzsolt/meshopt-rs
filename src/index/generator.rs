@@ -3,11 +3,12 @@
 // This work is based on:
 // John McDonald, Mark Kilgard. Crack-Free Point-Normal Triangles using Adjacent Edge Normals. 2010
 
+use crate::hash::BuildNoopHasher;
 use crate::{INVALID_INDEX, Stream};
 
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
-use std::hash::{BuildHasherDefault, Hasher};
+use std::hash::{BuildHasherDefault, Hash, Hasher};
 
 #[derive(Default)]
 struct VertexHasher {
@@ -43,34 +44,28 @@ impl Hasher for VertexHasher {
 
 type BuildVertexHasher = BuildHasherDefault<VertexHasher>;
 
-#[cfg(feature = "experimental")]
-mod experimental {
-    use super::*;
-    use std::hash::Hash;
+#[derive(PartialEq, Eq)]
+pub struct Edge(pub (u32, u32));
 
-    #[derive(PartialEq, Eq)]
-    pub struct Edge(pub (u32, u32));
+impl Hash for Edge {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        const M: u32 = 0x5bd1e995;
 
-    impl Hash for Edge {
-        fn hash<H: Hasher>(&self, state: &mut H) {
-            const M: u32 = 0x5bd1e995;
+        let edge = self.0;
+        let mut h1 = edge.0;
+        let mut h2 = edge.1;
 
-            let edge = self.0;
-            let mut h1 = edge.0;
-            let mut h2 = edge.1;
+        // MurmurHash64B finalizer
+        h1 ^= h2 >> 18;
+        h1 = h1.wrapping_mul(M);
+        h2 ^= h1 >> 22;
+        h2 = h2.wrapping_mul(M);
+        h1 ^= h2 >> 17;
+        h1 = h1.wrapping_mul(M);
+        h2 ^= h1 >> 19;
+        h2 = h2.wrapping_mul(M);
 
-            // MurmurHash64B finalizer
-            h1 ^= h2 >> 18;
-            h1 = h1.wrapping_mul(M);
-            h2 ^= h1 >> 22;
-            h2 = h2.wrapping_mul(M);
-            h1 ^= h2 >> 17;
-            h1 = h1.wrapping_mul(M);
-            h2 ^= h1 >> 19;
-            h2 = h2.wrapping_mul(M);
-
-            state.write_u32(h2);
-        }
+        state.write_u32(h2);
     }
 }
 
@@ -280,7 +275,6 @@ pub fn generate_shadow_index_buffer_multi(destination: &mut [u32], indices: &[u3
     })
 }
 
-#[cfg(feature = "experimental")]
 fn build_position_remap(indices: &[u32], vertices: &Stream) -> Vec<u32> {
     let mut table = HashMap::with_capacity_and_hasher(vertices.len(), BuildVertexHasher::default());
     let mut remap = vec![INVALID_INDEX; vertices.len()];
@@ -313,11 +307,7 @@ fn build_position_remap(indices: &[u32], vertices: &Stream) -> Vec<u32> {
 /// # Arguments
 ///
 /// * `destination`: must contain enough space for the resulting index buffer (`indices.len() * 4` elements)
-#[cfg(feature = "experimental")]
 pub fn generate_tessellation_index_buffer(destination: &mut [u32], indices: &[u32], vertices: &Stream) {
-    use crate::hash::BuildNoopHasher;
-    use experimental::*;
-
     assert_eq!(indices.len() % 3, 0);
     assert!(destination.len() >= indices.len() * 4);
 
@@ -383,11 +373,7 @@ pub fn generate_tessellation_index_buffer(destination: &mut [u32], indices: &[u3
 /// # Arguments
 ///
 /// * `destination`: must contain enough space for the resulting index buffer (`indices.len() * 2` elements)
-#[cfg(feature = "experimental")]
 pub fn generate_adjacency_index_buffer(destination: &mut [u32], indices: &[u32], vertices: &Stream) {
-    use crate::hash::BuildNoopHasher;
-    use experimental::*;
-
     assert_eq!(indices.len() % 3, 0);
     assert!(destination.len() >= indices.len() * 2);
 
@@ -434,7 +420,7 @@ pub fn generate_adjacency_index_buffer(destination: &mut [u32], indices: &[u32],
     }
 }
 
-#[cfg(all(test, feature = "experimental"))]
+#[cfg(test)]
 mod test {
     use super::*;
 

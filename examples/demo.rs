@@ -1,7 +1,9 @@
 #![allow(clippy::identity_op)]
 
+use meshopt_rs::cluster::*;
 use meshopt_rs::index::buffer::*;
 use meshopt_rs::index::generator::*;
+use meshopt_rs::index::sequence::*;
 use meshopt_rs::index::*;
 use meshopt_rs::overdraw::*;
 use meshopt_rs::quantize::*;
@@ -13,7 +15,7 @@ use meshopt_rs::vertex::*;
 use meshopt_rs::{INVALID_INDEX, Stream};
 
 #[cfg(feature = "experimental")]
-use meshopt_rs::{cluster::*, index::sequence::*, simplify::*, spatial_order::*};
+use meshopt_rs::{simplify::*, spatial_order::*};
 
 use std::env;
 use std::fmt::Debug;
@@ -465,7 +467,6 @@ fn encode_index(mesh: &Mesh, desc: char) {
     );
 }
 
-#[cfg(feature = "experimental")]
 fn encode_index_sequence1(data: &[u32], vertex_count: usize, desc: char) {
     // allocate result outside of the timing loop to exclude memset() from decode timing
     let mut result = vec![0; data.len()];
@@ -885,7 +886,6 @@ fn shadow(mesh: &Mesh) {
     );
 }
 
-#[cfg(feature = "experimental")]
 fn meshlets(mesh: &Mesh, scan: bool) {
     const MAX_VERTICES: usize = 64;
     const MAX_TRIANGLES: usize = 124; // NVidia-recommended 126, rounded down to a multiple of 4
@@ -1222,7 +1222,6 @@ where
     Ok(())
 }
 
-#[cfg(feature = "experimental")]
 fn tessellation_adjacency(mesh: &Mesh) {
     let start = Instant::now();
 
@@ -1277,14 +1276,10 @@ fn process(mesh: &Mesh) {
     stripify_mesh(&copy, true, 'R');
     stripify_mesh(&copystrip, true, 'S');
 
-    #[cfg(feature = "experimental")]
-    {
-        meshlets(&copy, false);
-        meshlets(&copy, true);
-    }
+    meshlets(&copy, false);
+    meshlets(&copy, true);
 
     shadow(&copy);
-    #[cfg(feature = "experimental")]
     tessellation_adjacency(&copy);
 
     encode_index(&copy, ' ');
@@ -1294,7 +1289,6 @@ fn process(mesh: &Mesh) {
     let size = stripify(&mut strip, &copystrip.indices, copystrip.vertices.len(), 0);
     strip.resize(size, 0);
 
-    #[cfg(feature = "experimental")]
     encode_index_sequence1(&strip, copystrip.vertices.len(), 'D');
 
     pack_vertex(&copy);
@@ -1313,8 +1307,7 @@ fn process(mesh: &Mesh) {
     }
 }
 
-fn process_dev(#[allow(unused)] mesh: &Mesh) {
-    #[cfg(feature = "experimental")]
+fn process_dev(mesh: &Mesh) {
     tessellation_adjacency(mesh);
 }
 

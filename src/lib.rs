@@ -7,7 +7,6 @@
 #![allow(clippy::identity_op)]
 #![allow(clippy::erasing_op)]
 
-#[cfg(feature = "experimental")]
 pub mod cluster;
 mod hash;
 pub mod index;
