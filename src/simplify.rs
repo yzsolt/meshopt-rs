@@ -1903,7 +1903,7 @@ mod test {
 
         let mut dst = vec![0; ib.len()];
 
-        assert_eq!(simplify(&mut dst, &ib, &vb, 12, 1e-3, None), expected.len());
+        assert_eq!(simplify(&mut dst, &ib, &vb, 3, 1e-3, None), expected.len());
         assert_eq!(&dst[0..expected.len()], expected);
     }
 
