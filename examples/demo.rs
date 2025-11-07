@@ -7,6 +7,7 @@ use meshopt_rs::index::sequence::*;
 use meshopt_rs::index::*;
 use meshopt_rs::overdraw::*;
 use meshopt_rs::quantize::*;
+use meshopt_rs::simplify::*;
 use meshopt_rs::stripify::*;
 use meshopt_rs::vertex::buffer::*;
 use meshopt_rs::vertex::cache::*;
@@ -15,7 +16,7 @@ use meshopt_rs::vertex::*;
 use meshopt_rs::{INVALID_INDEX, Stream};
 
 #[cfg(feature = "experimental")]
-use meshopt_rs::{simplify::*, spatial_order::*};
+use meshopt_rs::spatial_order::*;
 
 use std::env;
 use std::fmt::Debug;
@@ -562,7 +563,6 @@ where
     );
 }
 
-#[cfg(feature = "experimental")]
 fn simplify_mesh(mesh: &Mesh) {
     let threshold = 0.2;
 
@@ -1304,9 +1304,10 @@ fn process(mesh: &Mesh) {
     encode_vertex(&copy);
     encode_vertex_oct(&copy);
 
+    simplify_mesh(mesh);
+
     #[cfg(feature = "experimental")]
     {
-        simplify_mesh(mesh);
         simplify_mesh_sloppy(mesh, 0.2);
         simplify_mesh_complete(mesh);
         simplify_mesh_points(mesh, 0.2);

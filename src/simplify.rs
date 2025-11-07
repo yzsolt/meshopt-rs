@@ -1,10 +1,9 @@
-//! **Experimental** mesh and point cloud simplification
+//! Mesh and point cloud simplification
 use bitflags::bitflags;
 
 use crate::INVALID_INDEX;
 use crate::Vector3;
 use crate::hash::BuildNoopHasher;
-use crate::simplify::hash::VertexId;
 use crate::util::zero_inverse;
 use crate::vertex::{Position, calc_pos_extents};
 
@@ -127,22 +126,6 @@ mod hash {
     }
 
     impl Eq for VertexPosition {}
-
-    #[derive(PartialEq, Eq, Clone, Copy, Default)]
-    pub struct VertexId(pub u32);
-
-    impl Hash for VertexId {
-        fn hash<H: Hasher>(&self, state: &mut H) {
-            let mut h = self.0;
-
-            // MurmurHash2 finalizer
-            h ^= h >> 13;
-            h = h.wrapping_mul(0x5bd1e995);
-            h ^= h >> 15;
-
-            state.write_u32(h);
-        }
-    }
 }
 
 fn build_position_remap<Vertex>(remap: &mut [u32], wedge: &mut [u32], vertices: &[Vertex])
@@ -186,7 +169,8 @@ enum VertexKind {
     Manifold, // not on an attribute seam, not on any boundary
     Border,   // not on an attribute seam, has exactly two open edges
     Seam,     // on an attribute seam with exactly two attribute seam edges
-    Complex,  // none of the above; these vertices can move as long as all wedges move to the target vertex
+    #[allow(unused)]
+    Complex, // none of the above; these vertices can move as long as all wedges move to the target vertex
     Locked,   // none of the above; these vertices can't move
 }
 
@@ -473,6 +457,7 @@ impl AddAssign for Quadric {
 }
 
 impl Quadric {
+    #[cfg(feature = "experimental")]
     pub fn from_point(x: f32, y: f32, z: f32, w: f32) -> Self {
         // we need to encode (x - X) ^ 2 + (y - Y)^2 + (z - Z)^2 into the quadric
         Self {
@@ -1058,188 +1043,210 @@ fn remap_edge_loops(loop_: &mut [u32], collapse_remap: &[u32]) {
     }
 }
 
-fn compute_vertex_ids(vertex_ids: &mut [VertexId], vertex_positions: &[Vector3], grid_size: i32) {
-    assert!((1..=1024).contains(&grid_size));
-    let cell_scale = (grid_size - 1) as f32;
+#[cfg(feature = "experimental")]
+mod experimental {
+    use super::*;
+    use std::hash::{Hash, Hasher};
 
-    for (pos, id) in vertex_positions.iter().zip(vertex_ids.iter_mut()) {
-        let xi = (pos.x * cell_scale + 0.5) as i32;
-        let yi = (pos.y * cell_scale + 0.5) as i32;
-        let zi = (pos.z * cell_scale + 0.5) as i32;
+    #[derive(PartialEq, Eq, Clone, Copy, Default)]
+    pub struct VertexId(pub u32);
 
-        *id = VertexId(((xi << 20) | (yi << 10) | zi) as u32);
-    }
-}
+    impl Hash for VertexId {
+        fn hash<H: Hasher>(&self, state: &mut H) {
+            let mut h = self.0;
 
-fn count_triangles(vertex_ids: &[VertexId], indices: &[u32]) -> usize {
-    let mut result = 0;
+            // MurmurHash2 finalizer
+            h ^= h >> 13;
+            h = h.wrapping_mul(0x5bd1e995);
+            h ^= h >> 15;
 
-    for abc in indices.chunks_exact(3) {
-        let id0 = vertex_ids[abc[0] as usize];
-        let id1 = vertex_ids[abc[1] as usize];
-        let id2 = vertex_ids[abc[2] as usize];
-
-        result += ((id0 != id1) && (id0 != id2) && (id1 != id2)) as usize;
-    }
-
-    result
-}
-
-fn fill_vertex_cells(
-    table: &mut HashMap<VertexId, u32, BuildNoopHasher>,
-    vertex_cells: &mut [u32],
-    vertex_ids: &[VertexId],
-) -> usize {
-    let mut result: usize = 0;
-
-    for i in 0..vertex_ids.len() {
-        vertex_cells[i] = match table.entry(vertex_ids[i]) {
-            Entry::Occupied(entry) => vertex_cells[*entry.get() as usize],
-            Entry::Vacant(entry) => {
-                entry.insert(i as u32);
-                result += 1;
-                result as u32 - 1
-            }
-        };
-    }
-
-    result
-}
-
-fn count_vertex_cells(table: &mut HashMap<VertexId, u32, BuildNoopHasher>, vertex_ids: &[VertexId]) -> usize {
-    table.clear();
-
-    let mut result = 0;
-
-    for id in vertex_ids {
-        result += match table.entry(*id) {
-            Entry::Occupied(mut entry) => {
-                *entry.get_mut() = id.0;
-                0
-            }
-            Entry::Vacant(entry) => {
-                entry.insert(id.0);
-                1
-            }
-        };
-    }
-
-    result
-}
-
-fn fill_cell_quadrics(
-    cell_quadrics: &mut [Quadric],
-    indices: &[u32],
-    vertex_positions: &[Vector3],
-    vertex_cells: &[u32],
-) {
-    for abc in indices.chunks_exact(3) {
-        let i0 = abc[0] as usize;
-        let i1 = abc[1] as usize;
-        let i2 = abc[2] as usize;
-
-        let c0 = vertex_cells[i0] as usize;
-        let c1 = vertex_cells[i1] as usize;
-        let c2 = vertex_cells[i2] as usize;
-
-        let single_cell = (c0 == c1) & (c0 == c2);
-
-        let q = Quadric::from_triangle(
-            &vertex_positions[i0],
-            &vertex_positions[i1],
-            &vertex_positions[i2],
-            if single_cell { 3.0 } else { 1.0 },
-        );
-
-        if single_cell {
-            cell_quadrics[c0] += q;
-        } else {
-            cell_quadrics[c0] += q;
-            cell_quadrics[c1] += q;
-            cell_quadrics[c2] += q;
+            state.write_u32(h);
         }
     }
-}
 
-fn fill_cell_quadrics2(cell_quadrics: &mut [Quadric], vertex_positions: &[Vector3], vertex_cells: &[u32]) {
-    for (c, v) in vertex_cells.iter().zip(vertex_positions.iter()) {
-        let q = Quadric::from_point(v.x, v.y, v.z, 1.0);
+    pub fn compute_vertex_ids(vertex_ids: &mut [VertexId], vertex_positions: &[Vector3], grid_size: i32) {
+        assert!((1..=1024).contains(&grid_size));
+        let cell_scale = (grid_size - 1) as f32;
 
-        cell_quadrics[*c as usize] += q;
-    }
-}
+        for (pos, id) in vertex_positions.iter().zip(vertex_ids.iter_mut()) {
+            let xi = (pos.x * cell_scale + 0.5) as i32;
+            let yi = (pos.y * cell_scale + 0.5) as i32;
+            let zi = (pos.z * cell_scale + 0.5) as i32;
 
-fn fill_cell_remap(
-    cell_remap: &mut [u32],
-    cell_errors: &mut [f32],
-    vertex_cells: &[u32],
-    cell_quadrics: &[Quadric],
-    vertex_positions: &[Vector3],
-) {
-    for ((i, c), v) in vertex_cells.iter().enumerate().zip(vertex_positions.iter()) {
-        let cell = *c as usize;
-        let error = cell_quadrics[cell].error(v);
-
-        if cell_remap[cell] == INVALID_INDEX || cell_errors[cell] > error {
-            cell_remap[cell] = i as u32;
-            cell_errors[cell] = error;
+            *id = VertexId(((xi << 20) | (yi << 10) | zi) as u32);
         }
     }
-}
 
-fn filter_triangles(
-    destination: &mut [u32],
-    tritable: &mut HashMap<hash::VertexPosition, u32, BuildNoopHasher>,
-    indices: &[u32],
-    vertex_cells: &[u32],
-    cell_remap: &[u32],
-) -> usize {
-    let mut result = 0;
+    pub fn count_triangles(vertex_ids: &[VertexId], indices: &[u32]) -> usize {
+        let mut result = 0;
 
-    for idx in indices.chunks_exact(3) {
-        let c0 = vertex_cells[idx[0] as usize] as usize;
-        let c1 = vertex_cells[idx[1] as usize] as usize;
-        let c2 = vertex_cells[idx[2] as usize] as usize;
+        for abc in indices.chunks_exact(3) {
+            let id0 = vertex_ids[abc[0] as usize];
+            let id1 = vertex_ids[abc[1] as usize];
+            let id2 = vertex_ids[abc[2] as usize];
 
-        if c0 != c1 && c0 != c2 && c1 != c2 {
-            let a = cell_remap[c0];
-            let b = cell_remap[c1];
-            let c = cell_remap[c2];
+            result += ((id0 != id1) && (id0 != id2) && (id1 != id2)) as usize;
+        }
 
-            let mut abc = [a, b, c];
+        result
+    }
 
-            if b < a && b < c {
-                abc.rotate_left(1);
-            } else if c < a && c < b {
-                abc.rotate_right(1);
-            };
+    pub fn fill_vertex_cells(
+        table: &mut HashMap<VertexId, u32, BuildNoopHasher>,
+        vertex_cells: &mut [u32],
+        vertex_ids: &[VertexId],
+    ) -> usize {
+        let mut result: usize = 0;
 
-            destination[result * 3..result * 3 + 3].copy_from_slice(&abc);
-
-            let p = hash::VertexPosition([
-                f32::from_bits(abc[0]),
-                f32::from_bits(abc[1]),
-                f32::from_bits(abc[2]),
-            ]);
-
-            match tritable.entry(p) {
-                Entry::Occupied(_entry) => {}
+        for i in 0..vertex_ids.len() {
+            vertex_cells[i] = match table.entry(vertex_ids[i]) {
+                Entry::Occupied(entry) => vertex_cells[*entry.get() as usize],
                 Entry::Vacant(entry) => {
-                    entry.insert(result as u32);
+                    entry.insert(i as u32);
                     result += 1;
+                    result as u32 - 1
+                }
+            };
+        }
+
+        result
+    }
+
+    pub fn count_vertex_cells(table: &mut HashMap<VertexId, u32, BuildNoopHasher>, vertex_ids: &[VertexId]) -> usize {
+        table.clear();
+
+        let mut result = 0;
+
+        for id in vertex_ids {
+            result += match table.entry(*id) {
+                Entry::Occupied(mut entry) => {
+                    *entry.get_mut() = id.0;
+                    0
+                }
+                Entry::Vacant(entry) => {
+                    entry.insert(id.0);
+                    1
+                }
+            };
+        }
+
+        result
+    }
+
+    pub fn fill_cell_quadrics(
+        cell_quadrics: &mut [Quadric],
+        indices: &[u32],
+        vertex_positions: &[Vector3],
+        vertex_cells: &[u32],
+    ) {
+        for abc in indices.chunks_exact(3) {
+            let i0 = abc[0] as usize;
+            let i1 = abc[1] as usize;
+            let i2 = abc[2] as usize;
+
+            let c0 = vertex_cells[i0] as usize;
+            let c1 = vertex_cells[i1] as usize;
+            let c2 = vertex_cells[i2] as usize;
+
+            let single_cell = (c0 == c1) & (c0 == c2);
+
+            let q = Quadric::from_triangle(
+                &vertex_positions[i0],
+                &vertex_positions[i1],
+                &vertex_positions[i2],
+                if single_cell { 3.0 } else { 1.0 },
+            );
+
+            if single_cell {
+                cell_quadrics[c0] += q;
+            } else {
+                cell_quadrics[c0] += q;
+                cell_quadrics[c1] += q;
+                cell_quadrics[c2] += q;
+            }
+        }
+    }
+
+    pub fn fill_cell_quadrics2(cell_quadrics: &mut [Quadric], vertex_positions: &[Vector3], vertex_cells: &[u32]) {
+        for (c, v) in vertex_cells.iter().zip(vertex_positions.iter()) {
+            let q = Quadric::from_point(v.x, v.y, v.z, 1.0);
+
+            cell_quadrics[*c as usize] += q;
+        }
+    }
+
+    pub fn fill_cell_remap(
+        cell_remap: &mut [u32],
+        cell_errors: &mut [f32],
+        vertex_cells: &[u32],
+        cell_quadrics: &[Quadric],
+        vertex_positions: &[Vector3],
+    ) {
+        for ((i, c), v) in vertex_cells.iter().enumerate().zip(vertex_positions.iter()) {
+            let cell = *c as usize;
+            let error = cell_quadrics[cell].error(v);
+
+            if cell_remap[cell] == INVALID_INDEX || cell_errors[cell] > error {
+                cell_remap[cell] = i as u32;
+                cell_errors[cell] = error;
+            }
+        }
+    }
+
+    pub fn filter_triangles(
+        destination: &mut [u32],
+        tritable: &mut HashMap<hash::VertexPosition, u32, BuildNoopHasher>,
+        indices: &[u32],
+        vertex_cells: &[u32],
+        cell_remap: &[u32],
+    ) -> usize {
+        let mut result = 0;
+
+        for idx in indices.chunks_exact(3) {
+            let c0 = vertex_cells[idx[0] as usize] as usize;
+            let c1 = vertex_cells[idx[1] as usize] as usize;
+            let c2 = vertex_cells[idx[2] as usize] as usize;
+
+            if c0 != c1 && c0 != c2 && c1 != c2 {
+                let a = cell_remap[c0];
+                let b = cell_remap[c1];
+                let c = cell_remap[c2];
+
+                let mut abc = [a, b, c];
+
+                if b < a && b < c {
+                    abc.rotate_left(1);
+                } else if c < a && c < b {
+                    abc.rotate_right(1);
+                };
+
+                destination[result * 3..result * 3 + 3].copy_from_slice(&abc);
+
+                let p = hash::VertexPosition([
+                    f32::from_bits(abc[0]),
+                    f32::from_bits(abc[1]),
+                    f32::from_bits(abc[2]),
+                ]);
+
+                match tritable.entry(p) {
+                    Entry::Occupied(_entry) => {}
+                    Entry::Vacant(entry) => {
+                        entry.insert(result as u32);
+                        result += 1;
+                    }
                 }
             }
         }
+
+        result * 3
     }
 
-    result * 3
-}
-
-fn interpolate(y: f32, x0: f32, y0: f32, x1: f32, y1: f32, x2: f32, y2: f32) -> f32 {
-    // three point interpolation from "revenge of interpolation search" paper
-    let num = (y1 - y) * (x1 - x2) * (x1 - x0) * (y2 - y0);
-    let den = (y2 - y) * (x1 - x2) * (y0 - y1) + (y0 - y) * (x1 - x0) * (y1 - y2);
-    x1 + num / den
+    pub fn interpolate(y: f32, x0: f32, y0: f32, x1: f32, y1: f32, x2: f32, y2: f32) -> f32 {
+        // three point interpolation from "revenge of interpolation search" paper
+        let num = (y1 - y) * (x1 - x2) * (x1 - x0) * (y2 - y0);
+        let den = (y2 - y) * (x1 - x2) * (y0 - y1) + (y0 - y) * (x1 - x0) * (y1 - y2);
+        x1 + num / den
+    }
 }
 
 bitflags! {
@@ -1467,6 +1474,7 @@ where
 /// * `destination`: must contain enough space for the target index buffer, worst case is `indices.len()` elements (**not** `target_index_count`)!
 /// * `target_error`: represents the error relative to mesh extents that can be tolerated, e.g. 0.01 = 1% deformation
 /// * `result_error`: can be None; when it's not None, it will contain the resulting (relative) error after simplification
+#[cfg(feature = "experimental")]
 pub fn simplify_sloppy<Vertex>(
     destination: &mut [u32],
     indices: &[u32],
@@ -1478,6 +1486,8 @@ pub fn simplify_sloppy<Vertex>(
 where
     Vertex: Position,
 {
+    use experimental::*;
+
     assert_eq!(indices.len() % 3, 0);
     assert!(target_index_count <= indices.len());
 
@@ -1638,10 +1648,13 @@ where
 /// # Arguments
 ///
 /// * `destination`: must contain enough space for the target index buffer (`target_vertex_count` elements)
+#[cfg(feature = "experimental")]
 pub fn simplify_points<Vertex>(destination: &mut [u32], vertices: &[Vertex], target_vertex_count: usize) -> usize
 where
     Vertex: Position,
 {
+    use experimental::*;
+
     assert!(target_vertex_count <= vertices.len());
 
     let target_cell_count = target_vertex_count;
@@ -1867,6 +1880,7 @@ mod test {
     }
 
     #[test]
+    #[cfg(feature = "experimental")]
     fn test_simplify_sloppy_stuck() {
         let mut dst = vec![0; 16];
 
@@ -1881,6 +1895,7 @@ mod test {
     }
 
     #[test]
+    #[cfg(feature = "experimental")]
     fn test_simplify_points_stuck() {
         let mut dst = vec![0; 16];
 
