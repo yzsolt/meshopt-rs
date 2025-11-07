@@ -12,7 +12,6 @@ mod hash;
 pub mod index;
 pub mod overdraw;
 pub mod quantize;
-#[cfg(feature = "experimental")]
 pub mod simplify;
 #[cfg(feature = "experimental")]
 pub mod spatial_order;
@@ -135,7 +134,6 @@ impl Vector3 {
         Self { x, y, z }
     }
 
-    #[cfg(feature = "experimental")]
     pub fn normalize(&mut self) -> f32 {
         let length = (self.x * self.x + self.y * self.y + self.z * self.z).sqrt();
 
