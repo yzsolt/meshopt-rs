@@ -1829,6 +1829,49 @@ mod test {
     }
 
     #[test]
+    fn test_simplify() {
+        // 0
+        // 1 2
+        // 3 4 5
+        #[rustfmt::skip]
+        let ib = [
+            0, 2, 1,
+            1, 2, 3,
+            3, 2, 4,
+            2, 5, 4,
+        ];
+
+        #[rustfmt::skip]
+        let vb = vb_from_slice(&[
+            0.0, 4.0, 0.0,
+            0.0, 1.0, 0.0,
+            2.0, 2.0, 0.0,
+            0.0, 0.0, 0.0,
+            1.0, 0.0, 0.0,
+            4.0, 0.0, 0.0,
+        ]);
+
+        let expected = [0, 5, 3];
+
+        let mut error = 1.0;
+        let mut dst = vec![0; ib.len()];
+        assert_eq!(
+            simplify(
+                &mut dst,
+                &ib,
+                &vb,
+                3,
+                1e-2,
+                SimplificationOptions::empty(),
+                Some(&mut error)
+            ),
+            3
+        );
+        assert_eq!(error, 0.0);
+        assert_eq!(&dst[0..expected.len()], expected);
+    }
+
+    #[test]
     fn test_simplify_stuck() {
         let mut dst = vec![0; 16];
 
