@@ -840,7 +840,8 @@ where
 /// ```
 ///
 /// The formula that uses the apex is slightly more accurate but needs the apex; if you are already using bounding sphere
-/// to do frustum/occlusion culling, the formula that doesn't use the apex may be preferable.
+/// to do frustum/occlusion culling, the formula that doesn't use the apex may be preferable (for derivation see
+/// Real-Time Rendering 4th Edition, section 19.3).
 ///
 /// # Arguments
 ///
