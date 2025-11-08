@@ -549,6 +549,86 @@ pub fn build_meshlets_scan(
     meshlet_offset
 }
 
+#[allow(clippy::too_many_arguments)]
+fn get_neighbor_triangle(
+    meshlet: &Meshlet,
+    meshlet_cone: Option<&Cone>,
+    meshlet_vertices: &mut [u32],
+    indices: &[u32],
+    adjacency: &TriangleAdjacency,
+    triangles: &[Cone],
+    live_triangles: &[u32],
+    used: &[u8],
+    meshlet_expected_radius: f32,
+    cone_weight: f32,
+) -> (Option<usize>, usize) {
+    let mut best_triangle = None;
+    let mut best_extra = 5;
+    let mut best_score = f32::MAX;
+
+    for i in 0..meshlet.vertex_count {
+        let index = meshlet_vertices[meshlet.vertex_offset as usize + i as usize] as usize;
+
+        let neighbors_size = adjacency.counts[index] as usize;
+        let neighbouts_offset = adjacency.offsets[index] as usize;
+        let neighbors = &adjacency.data[neighbouts_offset..neighbouts_offset + neighbors_size];
+
+        for triangle in neighbors {
+            let triangle = *triangle as usize;
+
+            let [a, b, c] = &indices[triangle * 3..triangle * 3 + 3].try_into().unwrap();
+
+            let a = *a as usize;
+            let b = *b as usize;
+            let c = *c as usize;
+
+            let mut extra = [used[a], used[b], used[c]].iter().filter(|v| **v == UNUSED).count();
+
+            // triangles that don't add new vertices to meshlets are max. priority
+            if extra != 0 {
+                // artificially increase the priority of dangling triangles as they're expensive to add to new meshlets
+                if live_triangles[a] == 1 || live_triangles[b] == 1 || live_triangles[c] == 1 {
+                    extra = 0;
+                }
+
+                extra += 1;
+            }
+
+            // since topology-based priority is always more important than the score, we can skip scoring in some cases
+            if extra > best_extra {
+                continue;
+            }
+
+            // caller selects one of two scoring functions: geometrical (based on meshlet cone) or topological (based on remaining triangles)
+            let score = if let Some(meshlet_cone) = meshlet_cone {
+                let tri_cone = &triangles[triangle];
+
+                let distance2 = (tri_cone.px - meshlet_cone.px) * (tri_cone.px - meshlet_cone.px)
+                    + (tri_cone.py - meshlet_cone.py) * (tri_cone.py - meshlet_cone.py)
+                    + (tri_cone.pz - meshlet_cone.pz) * (tri_cone.pz - meshlet_cone.pz);
+
+                let spread =
+                    tri_cone.nx * meshlet_cone.nx + tri_cone.ny * meshlet_cone.ny + tri_cone.nz * meshlet_cone.nz;
+
+                get_meshlet_score(distance2, spread, cone_weight, meshlet_expected_radius)
+            } else {
+                // each live_triangles entry is >= 1 since it includes the current triangle we're processing
+                (live_triangles[a] + live_triangles[b] + live_triangles[c] - 3) as f32
+            };
+
+            // note that topology-based priority is always more important than the score
+            // this helps maintain reasonable effectiveness of meshlet data and reduces scoring cost
+            if extra < best_extra || score < best_score {
+                best_triangle = Some(triangle);
+                best_extra = extra;
+                best_score = score;
+            }
+        }
+    }
+
+    (best_triangle, best_extra)
+}
+
 /// Splits the mesh into a set of meshlets where each meshlet has a micro index buffer indexing into meshlet vertices that refer to the original vertex buffer.
 ///
 /// The resulting data can be used to render meshes using NVidia programmable mesh shading pipeline, or in other cluster-based renderers.
@@ -580,6 +660,8 @@ where
     assert!((3..=MESHLET_MAX_VERTICES).contains(&max_vertices));
     assert!((1..=MESHLET_MAX_TRIANGLES).contains(&max_triangles));
     assert!(max_triangles.is_multiple_of(4)); // ensures the caller will compute output space properly as index data is 4b aligned
+
+    assert!((0.0..=1.0).contains(&cone_weight));
 
     let mut adjacency = TriangleAdjacency::default();
     build_triangle_adjacency(&mut adjacency, indices, vertices.len());
@@ -617,66 +699,42 @@ where
     let mut meshlet_cone_acc = Cone::default();
 
     loop {
-        let mut best_triangle = None;
-        let mut best_extra = 5;
-        let mut best_score = f32::MAX;
-
         let meshlet_cone = get_meshlet_cone(&meshlet_cone_acc, meshlet.triangle_count);
 
-        for i in 0..meshlet.vertex_count {
-            let index = meshlet_vertices[meshlet.vertex_offset as usize + i as usize] as usize;
+        let (mut best_triangle, best_extra) = get_neighbor_triangle(
+            &meshlet,
+            Some(&meshlet_cone),
+            meshlet_vertices,
+            indices,
+            &adjacency,
+            &triangles,
+            &live_triangles,
+            &used,
+            meshlet_expected_radius,
+            cone_weight,
+        );
 
-            let neighbours_size = adjacency.counts[index] as usize;
-            let neighbouts_offset = adjacency.offsets[index] as usize;
-            let neighbours = &adjacency.data[neighbouts_offset..neighbouts_offset + neighbours_size];
-
-            for triangle in neighbours {
-                let triangle = *triangle as usize;
-                assert!(!emitted_flags[triangle]);
-
-                let a = indices[triangle * 3 + 0] as usize;
-                let b = indices[triangle * 3 + 1] as usize;
-                let c = indices[triangle * 3 + 2] as usize;
-                assert!(a < vertices.len() && b < vertices.len() && c < vertices.len());
-
-                let mut extra = [used[a], used[b], used[c]].iter().filter(|v| **v == UNUSED).count();
-
-                // triangles that don't add new vertices to meshlets are max. priority
-                if extra != 0 {
-                    // artificially increase the priority of dangling triangles as they're expensive to add to new meshlets
-                    if live_triangles[a] == 1 || live_triangles[b] == 1 || live_triangles[c] == 1 {
-                        extra = 0;
-                    }
-
-                    extra += 1;
-                }
-
-                // since topology-based priority is always more important than the score, we can skip scoring in some cases
-                if extra > best_extra {
-                    continue;
-                }
-
-                let tri_cone = &triangles[triangle];
-
-                let distance2 = (tri_cone.px - meshlet_cone.px) * (tri_cone.px - meshlet_cone.px)
-                    + (tri_cone.py - meshlet_cone.py) * (tri_cone.py - meshlet_cone.py)
-                    + (tri_cone.pz - meshlet_cone.pz) * (tri_cone.pz - meshlet_cone.pz);
-
-                let spread =
-                    tri_cone.nx * meshlet_cone.nx + tri_cone.ny * meshlet_cone.ny + tri_cone.nz * meshlet_cone.nz;
-
-                let score = get_meshlet_score(distance2, spread, cone_weight, meshlet_expected_radius);
-
-                // note that topology-based priority is always more important than the score
-                // this helps maintain reasonable effectiveness of meshlet data and reduces scoring cost
-                if extra < best_extra || score < best_score {
-                    best_triangle = Some(triangle);
-                    best_extra = extra;
-                    best_score = score;
-                }
-            }
+        // if the best triangle doesn't fit into current meshlet, the spatial scoring we've used is not very meaningful, so we re-select using topological scoring
+        if best_triangle.is_some()
+            && ((meshlet.vertex_count + best_extra as u32) as usize > max_vertices
+                || meshlet.triangle_count as usize >= max_triangles)
+        {
+            best_triangle = get_neighbor_triangle(
+                &meshlet,
+                None,
+                meshlet_vertices,
+                indices,
+                &adjacency,
+                &triangles,
+                &live_triangles,
+                &used,
+                meshlet_expected_radius,
+                0.0,
+            )
+            .0;
         }
 
+        // when we run out of neighboring triangles we need to switch to spatial search; we currently just pick the closest triangle irrespective of connectivity
         if best_triangle.is_none() {
             let position = [meshlet_cone.px, meshlet_cone.py, meshlet_cone.pz];
             let mut index = !0u32;
@@ -719,15 +777,15 @@ where
             for index in abc {
                 let index = index as usize;
 
-                let neighbours_offset = adjacency.offsets[index] as usize;
-                let neighbours_size = adjacency.counts[index] as usize;
-                let neighbours = &mut adjacency.data[neighbours_offset..neighbours_offset + neighbours_size];
+                let neighbors_offset = adjacency.offsets[index] as usize;
+                let neighbors_size = adjacency.counts[index] as usize;
+                let neighbors = &mut adjacency.data[neighbors_offset..neighbors_offset + neighbors_size];
 
-                for i in 0..neighbours_size {
-                    let tri = neighbours[i] as usize;
+                for i in 0..neighbors_size {
+                    let tri = neighbors[i] as usize;
 
                     if tri == best_triangle {
-                        neighbours[i] = neighbours[neighbours_size - 1];
+                        neighbors[i] = neighbors[neighbors_size - 1];
                         adjacency.counts[index] -= 1;
                         break;
                     }
