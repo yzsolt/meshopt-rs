@@ -655,7 +655,7 @@ fn has_triangle_flip(a: &Vector3, b: &Vector3, c: &Vector3, d: &Vector3) -> bool
         eb.x * ed.y - eb.y * ed.x,
     );
 
-    nbc.x * nbd.x + nbc.y * nbd.y + nbc.z * nbd.z < 0.0
+    nbc.x * nbd.x + nbc.y * nbd.y + nbc.z * nbd.z <= 0.0
 }
 
 fn has_triangle_flips(
@@ -680,7 +680,6 @@ fn has_triangle_flips(
         let b = collapse_remap[edge.prev as usize] as usize;
 
         // skip triangles that get collapsed
-        // note: this is mathematically redundant as if either of these is true, the dot product in has_triangle_flip should be 0
         if a == i1 || b == i1 {
             continue;
         }
