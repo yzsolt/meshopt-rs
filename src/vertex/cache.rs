@@ -150,7 +150,7 @@ fn get_next_vertex_dead_end(
     u32::MAX
 }
 
-fn get_next_vertex_neighbour(
+fn get_next_vertex_neighbor(
     next_candidates: &[u32],
     live_triangles: &[u32],
     cache_timestamps: &[u32],
@@ -302,14 +302,14 @@ fn optimize_vertex_cache_table(
         for index in abc {
             let index = *index as usize;
 
-            let neighbours = &mut adjacency.data[adjacency.offsets[index] as usize..];
-            let neighbours_size = adjacency.counts[index] as usize;
+            let neighbors = &mut adjacency.data[adjacency.offsets[index] as usize..];
+            let neighbors_size = adjacency.counts[index] as usize;
 
-            for i in 0..neighbours_size {
-                let tri = neighbours[i];
+            for i in 0..neighbors_size {
+                let tri = neighbors[i];
 
                 if tri == current_triangle {
-                    neighbours[i] = neighbours[neighbours_size - 1];
+                    neighbors[i] = neighbors[neighbors_size - 1];
                     adjacency.counts[index] -= 1;
                     break;
                 }
@@ -331,9 +331,9 @@ fn optimize_vertex_cache_table(
 
             // update scores of vertex triangles
             let off = adjacency.offsets[index] as usize;
-            let neighbours = &adjacency.data[off..off + adjacency.counts[index] as usize];
+            let neighbors = &adjacency.data[off..off + adjacency.counts[index] as usize];
 
-            for tri in neighbours {
+            for tri in neighbors {
                 assert!(!emitted_flags[*tri as usize]);
 
                 let tri_score = triangle_scores[*tri as usize] + score_diff;
@@ -430,12 +430,12 @@ pub fn optimize_vertex_cache_fifo(destination: &mut [u32], indices: &[u32], vert
     while current_vertex != INVALID_INDEX {
         let next_candidates_begin = dead_end_top;
 
-        // emit all vertex neighbours
+        // emit all vertex neighbors
         let o = adjacency.offsets[current_vertex as usize] as usize;
         let c = adjacency.counts[current_vertex as usize] as usize;
-        let neighbours = &adjacency.data[o..o + c];
+        let neighbors = &adjacency.data[o..o + c];
 
-        for triangle in neighbours {
+        for triangle in neighbors {
             let triangle = *triangle as usize;
 
             if !emitted_flags[triangle] {
@@ -472,7 +472,7 @@ pub fn optimize_vertex_cache_fifo(destination: &mut [u32], indices: &[u32], vert
         let next_candidates = &dead_end[next_candidates_begin..dead_end_top];
 
         // get next vertex
-        current_vertex = get_next_vertex_neighbour(
+        current_vertex = get_next_vertex_neighbor(
             next_candidates,
             &live_triangles,
             &cache_timestamps,

@@ -1318,7 +1318,7 @@ fn process(mesh: &Mesh) {
 }
 
 fn process_dev(mesh: &Mesh) {
-    tessellation_adjacency(mesh);
+    meshlets(mesh, false);
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {

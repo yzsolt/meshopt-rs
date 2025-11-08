@@ -1268,7 +1268,7 @@ bitflags! {
 /// # Arguments
 ///
 /// * `destination`: must contain enough space for the target index buffer, worst case is `indices.len()` elements (**not** `target_index_count`)!
-/// * `target_error`: represents the error relative to mesh extents that can be tolerated, e.g. 0.01 = 1% deformation
+/// * `target_error`: represents the error relative to mesh extents that can be tolerated, e.g. 0.01 = 1% deformation; value range [0..1]
 /// * `result_error`: can be None; when it's not None, it will contain the resulting (relative) error after simplification
 pub fn simplify<Vertex>(
     destination: &mut [u32],
@@ -1472,7 +1472,7 @@ where
 /// # Arguments
 ///
 /// * `destination`: must contain enough space for the target index buffer, worst case is `indices.len()` elements (**not** `target_index_count`)!
-/// * `target_error`: represents the error relative to mesh extents that can be tolerated, e.g. 0.01 = 1% deformation
+/// * `target_error`: represents the error relative to mesh extents that can be tolerated, e.g. 0.01 = 1% deformation; value range [0..1]
 /// * `result_error`: can be None; when it's not None, it will contain the resulting (relative) error after simplification
 #[cfg(feature = "experimental")]
 pub fn simplify_sloppy<Vertex>(

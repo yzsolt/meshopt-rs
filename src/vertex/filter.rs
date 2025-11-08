@@ -216,50 +216,88 @@ pub fn encode_filter_quat<'a>(
     }
 }
 
-fn frexp(s: f32) -> (f32, i32) {
-    if 0.0 == s {
-        (s, 0)
-    } else {
-        let lg = s.abs().log2();
-        let x = (lg.fract() - 1.).exp2();
-        let exp = lg.floor() + 1.0;
-        (s.signum() * x, exp as i32)
-    }
+// optimized variant of frexp
+fn optlog2(v: f32) -> i32 {
+    let u = v.to_bits();
+    // +1 accounts for implicit 1. in mantissa; denormalized numbers will end up clamped to min_exp by calling code
+    if u == 0 { 0 } else { ((u >> 23) & 0xff) as i32 - 127 + 1 }
 }
 
-fn ldexp(a: f32, exp: i32) -> f32 {
-    let f = exp as f32;
-    a * f.exp2()
+// optimized variant of ldexp
+fn optexp2(e: i32) -> f32 {
+    let u = ((e + 127) as u32) << 23;
+    f32::from_bits(u)
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum EncodeExpMode {
+    /// When encoding exponents, use separate values for each component (maximum quality)
+    Separate,
+    /// When encoding exponents, use shared value for all components of each vector (better compression)
+    SharedVector,
+    /// When encoding exponents, use shared value for each component of all vectors (best compression)
+    SharedComponent,
 }
 
 /// Encodes arbitrary (finite) floating-point data with 8-bit exponent and K-bit integer mantissa (1 <= K <= 24).
 ///
-/// Mantissa is shared between all components of a given vector as defined by `N`.
-/// When individual (scalar) encoding is desired, simply pass N=1 and adjust iterators accordingly ([core::array::from_ref], [core::array::from_mut]).
+/// Exponent can be shared between all components of a given vector as defined by `N` or all values of a given component.
 pub fn encode_filter_exp<'a, const N: usize>(
     destination: impl Iterator<Item = &'a mut [u32; N]>,
     bits: u32,
-    data: impl Iterator<Item = &'a [f32; N]>,
+    data: impl Iterator<Item = &'a [f32; N]> + Clone,
+    mode: EncodeExpMode,
 ) {
     assert!((1..=24).contains(&bits));
+    assert!((1..=64).contains(&N));
+
+    const MIN_EXP: i32 = -100;
+    let mut component_exp = [MIN_EXP; N];
+
+    if mode == EncodeExpMode::SharedComponent {
+        for v in data.clone() {
+            // use maximum exponent to encode values; this guarantees that mantissa is [-1, 1]
+            for (c, ce) in v.iter().zip(component_exp.iter_mut()) {
+                let e = optlog2(*c);
+                *ce = (*ce).max(e);
+            }
+        }
+    }
 
     for (v, d) in data.zip(destination) {
-        // use maximum exponent to encode values; this guarantees that mantissa is [-1, 1]
-        let mut exp = -100;
+        let mut vector_exp = MIN_EXP;
 
-        for c in v {
-            let (_, e) = frexp(*c);
-            exp = exp.max(e);
+        match mode {
+            EncodeExpMode::SharedVector => {
+                // use maximum exponent to encode values; this guarantees that mantissa is [-1, 1]
+                for c in v {
+                    let e = optlog2(*c);
+                    vector_exp = vector_exp.max(e);
+                }
+            }
+            EncodeExpMode::Separate => {
+                for (c, ce) in v.iter().zip(component_exp.iter_mut()) {
+                    let e = optlog2(*c);
+                    *ce = MIN_EXP.max(e);
+                }
+            }
+            _ => {}
         }
 
-        // note that we additionally scale the mantissa to make it a K-bit signed integer (K-1 bits for magnitude)
-        exp -= (bits - 1) as i32;
+        for ((vc, dc), ce) in v.iter().zip(d.iter_mut()).zip(component_exp) {
+            let mut exp = if mode == EncodeExpMode::SharedVector {
+                vector_exp
+            } else {
+                ce
+            };
 
-        // compute renormalized rounded mantissa for each component
-        let mmask = (1 << 24) - 1;
+            // note that we additionally scale the mantissa to make it a K-bit signed integer (K-1 bits for magnitude)
+            exp -= bits as i32 - 1;
 
-        for (vc, dc) in v.iter().zip(d.iter_mut()) {
-            let m = (ldexp(*vc, -exp) + if *vc >= 0.0 { 0.5 } else { -0.5 }) as i32;
+            // compute renormalized rounded mantissa for each component
+            let mmask = (1 << 24) - 1;
+
+            let m = (vc * optexp2(-exp) + if *vc >= 0.0 { 0.5 } else { -0.5 }) as i32;
 
             *dc = ((m & mmask) as u32) | ((exp as u32) << 24);
         }
@@ -469,19 +507,61 @@ mod test {
 
     #[test]
     fn test_encode_filter_exp() {
-        const DATA: [[f32; 3]; 1] = [[1.0, -23.4, -0.1]];
-        const EXPECTED: [[u32; 3]; 1] = [[0xf7000200, 0xf7ffd133, 0xf7ffffcd]];
+        const DATA: [[f32; 2]; 2] = [[1.0, -23.4], [-0.1, 11.0]];
 
-        let mut encoded = [[0u32; 3]; 1];
-        encode_filter_exp::<3>(encoded.iter_mut(), 15, DATA.iter());
+        // separate exponents: each component gets its own value
+        const EXPECTED1: [[u32; 2]; 2] = [[0xf3002000, 0xf7ffd133], [0xefffcccd, 0xf6002c00]];
+
+        // shared exponents (vector): all components of each vector get the same value
+        const EXPECTED2: [[u32; 2]; 2] = [[0xf7000200, 0xf7ffd133], [0xf6ffff9a, 0xf6002c00]];
+
+        // shared exponents (component): each component gets the same value across all vectors
+        const EXPECTED3: [[u32; 2]; 2] = [[0xf3002000, 0xf7ffd133], [0xf3fffccd, 0xf7001600]];
+
+        let mut encoded1 = [[0u32; 2]; 2];
+        encode_filter_exp::<2>(encoded1.iter_mut(), 15, DATA.iter(), EncodeExpMode::Separate);
+        assert_eq!(encoded1, EXPECTED1);
+
+        let mut encoded2 = [[0u32; 2]; 2];
+        encode_filter_exp::<2>(encoded2.iter_mut(), 15, DATA.iter(), EncodeExpMode::SharedVector);
+        assert_eq!(encoded2, EXPECTED2);
+
+        let mut encoded3 = [[0u32; 2]; 2];
+        encode_filter_exp::<2>(encoded3.iter_mut(), 15, DATA.iter(), EncodeExpMode::SharedComponent);
+        assert_eq!(encoded3, EXPECTED3);
+
+        let mut decoded1 = encoded1.clone();
+        decode_filter_exp(decoded1.iter_mut().flatten());
+
+        let mut decoded2 = encoded2.clone();
+        decode_filter_exp(decoded2.iter_mut().flatten());
+
+        let mut decoded3 = encoded3.clone();
+        decode_filter_exp(decoded3.iter_mut().flatten());
+
+        for (i, data) in DATA[0].iter().enumerate() {
+            assert!((f32::from_bits(decoded1[0][i]) - *data).abs() < 1e-3);
+            assert!((f32::from_bits(decoded2[0][i]) - *data).abs() < 1e-3);
+            assert!((f32::from_bits(decoded3[0][i]) - *data).abs() < 1e-3);
+        }
+    }
+
+    #[test]
+    fn test_encode_filter_exp_zero() {
+        const DATA: [[f32; 1]; 1] = [[0.0]];
+        const EXPECTED: [[u32; 1]; 1] = [[0xf2000000]];
+
+        let mut encoded = [[0u32; 1]; 1];
+        encode_filter_exp::<1>(encoded.iter_mut(), 15, DATA.iter(), EncodeExpMode::Separate);
 
         assert_eq!(encoded, EXPECTED);
 
-        let mut decoded = encoded.clone();
+        let mut decoded = encoded;
         decode_filter_exp(decoded.iter_mut().flatten());
 
-        for (dat, dec) in DATA.iter().flatten().zip(decoded.iter().flatten()) {
-            assert!((f32::from_bits(*dec) - *dat).abs() < 1e-3);
-        }
+        assert_eq!(
+            decoded.iter().flatten().map(|d| f32::from_bits(*d)).collect::<Vec<_>>(),
+            DATA.iter().flatten().copied().collect::<Vec<_>>(),
+        );
     }
 }
