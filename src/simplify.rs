@@ -878,8 +878,8 @@ fn has_triangle_flips(
         let a = collapse_remap[edge.next as usize] as usize;
         let b = collapse_remap[edge.prev as usize] as usize;
 
-        // skip triangles that get collapsed
-        if a == i1 || b == i1 {
+        // skip triangles that will get collapsed by i0->i1 collapse or already got collapsed previously
+        if a == i1 || b == i1 || a == b {
             continue;
         }
 
