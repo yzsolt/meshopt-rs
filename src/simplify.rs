@@ -911,8 +911,32 @@ fn has_triangle_flips(
     false
 }
 
+fn bound_edge_collapses(
+    adjacency: &EdgeAdjacency,
+    index_count: usize,
+    vertex_kind: &[VertexKind],
+) -> usize {
+    let mut dual_count = 0;
+
+    for (k, w) in vertex_kind.iter().zip(adjacency.offsets.windows(2)) {
+        let c = w[1] - w[0];
+
+        dual_count += if *k == VertexKind::Manifold || *k == VertexKind::Seam {
+            c as usize
+        } else {
+            0
+        };
+    }
+
+    assert!(dual_count <= index_count);
+
+    // pad capacity by 3 so that we can check for overflow once per triangle instead of once per edge
+    (index_count - dual_count / 2) + 3
+}
+
 fn pick_edge_collapses(
     collapses: &mut [Collapse],
+    collapse_capacity: usize,
     indices: &[u32],
     remap: &[u32],
     vertex_kind: &[VertexKind],
@@ -926,6 +950,11 @@ fn pick_edge_collapses(
         for e in 0..3 {
             let i0 = i[e] as usize;
             let i1 = i[NEXT[e]] as usize;
+
+            // this should never happen as boundEdgeCollapses should give an upper bound for the collapse count, but in an unlikely event it does we can just drop extra collapses
+            if collapse_count + 3 > collapse_capacity {
+                break;
+            }
 
             // this can happen either when input has a zero-length edge, or when we perform collapses for complex
             // topology w/seams and collapse a manifold vertex that connects to both wedges onto one of them
@@ -1636,9 +1665,10 @@ where
 
     result.copy_from_slice(indices);
 
+    let collapse_capacity = bound_edge_collapses(&adjacency, indices.len(), &vertex_kind);
     // TODO: skip init?
-    let mut edge_collapses = vec![Collapse::default(); indices.len()];
-    let mut collapse_order = vec![0u32; indices.len()];
+    let mut edge_collapses = vec![Collapse::default(); collapse_capacity];
+    let mut collapse_order = vec![0u32; collapse_capacity];
     let mut collapse_remap = vec![0u32; vertices.len()];
     let mut collapse_locked = vec![false; vertices.len()];
 
@@ -1657,11 +1687,13 @@ where
 
         let edge_collapse_count = pick_edge_collapses(
             &mut edge_collapses,
+            collapse_capacity,
             &result[0..result_count],
             &remap,
             &vertex_kind,
             &loop_,
         );
+        assert!(edge_collapse_count <= collapse_capacity);
 
         // no edges can be collapsed any more due to topology restrictions
         if edge_collapse_count == 0 {
