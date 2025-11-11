@@ -1,15 +1,27 @@
 //! Mesh and point cloud simplification
+
+// This work is based on:
+// Michael Garland and Paul S. Heckbert. Surface simplification using quadric error metrics. 1997
+// Michael Garland. Quadric-based polygonal surface simplification. 1999
+// Peter Lindstrom. Out-of-Core Simplification of Large Polygonal Models. 2000
+// Matthias Teschner, Bruno Heidelberger, Matthias Mueller, Danat Pomeranets, Markus Gross. Optimized Spatial Hashing for Collision Detection of Deformable Objects. 2003
+// Peter Van Sandt, Yannis Chronis, Jignesh M. Patel. Efficiently Searching In-Memory Sorted Arrays: Revenge of the Interpolation Search? 2019
+// Hugues Hoppe. New Quadric Metric for Simplifying Meshes with Appearance Attributes. 1999
+
 use bitflags::bitflags;
 
 use crate::INVALID_INDEX;
 use crate::Vector3;
 use crate::hash::BuildNoopHasher;
 use crate::util::zero_inverse;
-use crate::vertex::{Position, calc_pos_extents};
+#[cfg(feature = "experimental")]
+use crate::vertex::{Vertex, calc_pos_extents};
 
 use std::collections::{HashMap, hash_map::Entry};
 use std::fmt::Debug;
 use std::ops::AddAssign;
+
+const MAX_ATTRIBUTES: usize = 16;
 
 #[derive(Clone, Default)]
 struct Edge {
@@ -128,9 +140,9 @@ mod hash {
     impl Eq for VertexPosition {}
 }
 
-fn build_position_remap<Vertex>(remap: &mut [u32], wedge: &mut [u32], vertices: &[Vertex])
+fn build_position_remap<V, const ATTR_COUNT: usize>(remap: &mut [u32], wedge: &mut [u32], vertices: &[V])
 where
-    Vertex: Position,
+    V: Vertex<ATTR_COUNT>,
 {
     let mut table = HashMap::with_capacity_and_hasher(vertices.len(), BuildNoopHasher::default());
 
@@ -362,9 +374,9 @@ fn classify_vertices(
     );
 }
 
-fn rescale_positions<Vertex>(result: &mut [Vector3], vertices: &[Vertex]) -> f32
+fn rescale_positions<V, const ATTR_COUNT: usize>(result: &mut [Vector3], vertices: &[V]) -> f32
 where
-    Vertex: Position,
+    V: Vertex<ATTR_COUNT>,
 {
     let (minv, extent) = calc_pos_extents(vertices);
 
@@ -532,6 +544,95 @@ impl Quadric {
         Self::from_plane(normal.x, normal.y, normal.z, -distance, length * weight)
     }
 
+    fn from_attributes<const ATTR_COUNT: usize>(
+        g: &mut [QuadricGrad; ATTR_COUNT],
+        p0: &Vector3,
+        p1: &Vector3,
+        p2: &Vector3,
+        va0: &[f32; ATTR_COUNT],
+        va1: &[f32; ATTR_COUNT],
+        va2: &[f32; ATTR_COUNT],
+    ) -> Self {
+        // for each attribute we want to encode the following function into the quadric:
+        // (eval(pos) - attr)^2
+        // where eval(pos) interpolates attribute across the triangle like so:
+        // eval(pos) = pos.x * gx + pos.y * gy + pos.z * gz + gw
+        // where gx/gy/gz/gw are gradients
+        let p10 = *p1 - *p0;
+        let p20 = *p2 - *p0;
+
+        // weight is scaled linearly with edge length
+        let normal = Vector3 {
+            x: p10.y * p20.z - p10.z * p20.y,
+            y: p10.z * p20.x - p10.x * p20.z,
+            z: p10.x * p20.y - p10.y * p20.x,
+        };
+        let area = normal.length();
+        let w = area.sqrt(); // TODO this needs more experimentation
+
+        // we compute gradients using barycentric coordinates; barycentric coordinates can be computed as follows:
+        // v = (d11 * d20 - d01 * d21) / denom
+        // w = (d00 * d21 - d01 * d20) / denom
+        // u = 1 - v - w
+        // here v0, v1 are triangle edge vectors, v2 is a vector from point to triangle corner, and dij = dot(vi, vj)
+        let v0 = &p10;
+        let v1 = &p20;
+        let d00 = v0.length_squared();
+        let d01 = v0.x * v1.x + v0.y * v1.y + v0.z * v1.z;
+        let d11 = v1.length_squared();
+        let denom = d00 * d11 - d01 * d01;
+        let denomr = zero_inverse(denom);
+
+        // precompute gradient factors
+        // these are derived by directly computing derivative of eval(pos) = a0 * u + a1 * v + a2 * w and factoring out common factors that are shared between attributes
+        let gx1 = (d11 * v0.x - d01 * v1.x) * denomr;
+        let gx2 = (d00 * v1.x - d01 * v0.x) * denomr;
+        let gy1 = (d11 * v0.y - d01 * v1.y) * denomr;
+        let gy2 = (d00 * v1.y - d01 * v0.y) * denomr;
+        let gz1 = (d11 * v0.z - d01 * v1.z) * denomr;
+        let gz2 = (d00 * v1.z - d01 * v0.z) * denomr;
+
+        let mut q = Quadric::default();
+        q.w = w;
+
+        for (k, gg) in g.iter_mut().enumerate() {
+            let a0 = va0[k];
+            let a1 = va1[k];
+            let a2 = va2[k];
+
+            // compute gradient of eval(pos) for x/y/z/w
+            // the formulas below are obtained by directly computing derivative of eval(pos) = a0 * u + a1 * v + a2 * w
+            let gx = gx1 * (a1 - a0) + gx2 * (a2 - a0);
+            let gy = gy1 * (a1 - a0) + gy2 * (a2 - a0);
+            let gz = gz1 * (a1 - a0) + gz2 * (a2 - a0);
+            let gw = a0 - p0.x * gx - p0.y * gy - p0.z * gz;
+
+            // quadric encodes (eval(pos)-attr)^2; this means that the resulting expansion needs to compute, for example, pos.x * pos.y * K
+            // since quadrics already encode factors for pos.x * pos.y, we can accumulate almost everything in basic quadric fields
+            q.a00 += w * (gx * gx);
+            q.a11 += w * (gy * gy);
+            q.a22 += w * (gz * gz);
+
+            q.a10 += w * (gy * gx);
+            q.a20 += w * (gz * gx);
+            q.a21 += w * (gz * gy);
+
+            q.b0 += w * (gx * gw);
+            q.b1 += w * (gy * gw);
+            q.b2 += w * (gz * gw);
+
+            q.c += w * (gw * gw);
+
+            // the only remaining sum components are ones that depend on attr; these will be addded during error evaluation, see quadricError
+            gg.gx = w * gx;
+            gg.gy = w * gy;
+            gg.gz = w * gz;
+            gg.gw = w * gw;
+        }
+
+        q
+    }
+
     pub fn error(&self, v: &Vector3) -> f32 {
         let mut rx = self.b0;
         let mut ry = self.b1;
@@ -557,6 +658,64 @@ impl Quadric {
         let s = zero_inverse(self.w);
 
         r.abs() * s
+    }
+
+    pub fn error_grad<const ATTR_COUNT: usize>(
+        &self,
+        g: &[QuadricGrad; ATTR_COUNT],
+        v: &Vector3,
+        va: &[f32; ATTR_COUNT],
+    ) -> f32 {
+        let mut rx = self.b0;
+        let mut ry = self.b1;
+        let mut rz = self.b2;
+
+        rx += self.a10 * v.y;
+        ry += self.a21 * v.z;
+        rz += self.a20 * v.x;
+
+        rx *= 2.0;
+        ry *= 2.0;
+        rz *= 2.0;
+
+        rx += self.a00 * v.x;
+        ry += self.a11 * v.y;
+        rz += self.a22 * v.z;
+
+        let mut r = self.c;
+        r += rx * v.x;
+        r += ry * v.y;
+        r += rz * v.z;
+
+        // see quadricFromAttributes for general derivation; here we need to add the parts of (eval(pos) - attr)^2 that depend on attr
+        for (a, gg) in va.iter().zip(g.iter()) {
+            let g = v.x * gg.gx + v.y * gg.gy + v.z * gg.gz + gg.gw;
+
+            r += a * a * self.w;
+            r -= 2.0 * a * g;
+        }
+
+        // TODO: weight normalization is breaking attribute error somehow
+        let s = 1.0; // q.w == zero_inverse(q.w);
+
+        r.abs() * s
+    }
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+struct QuadricGrad {
+    gx: f32,
+    gy: f32,
+    gz: f32,
+    gw: f32,
+}
+
+impl AddAssign for QuadricGrad {
+    fn add_assign(&mut self, other: Self) {
+        self.gx += other.gx;
+        self.gy += other.gy;
+        self.gz += other.gz;
+        self.gw += other.gw;
     }
 }
 
@@ -635,6 +794,46 @@ fn fill_edge_quadrics(
             vertex_quadrics[remap[i0] as usize] += q;
             vertex_quadrics[remap[i1] as usize] += q;
         }
+    }
+}
+
+fn add_grads<const ATTR_COUNT: usize>(g: &mut [QuadricGrad; ATTR_COUNT], r: &[QuadricGrad; ATTR_COUNT]) {
+    for (gg, rr) in g.iter_mut().zip(r.iter()) {
+        *gg += *rr;
+    }
+}
+
+fn fill_attribute_quadrics<const ATTR_COUNT: usize>(
+    attribute_quadrics: &mut [Quadric],
+    attribute_gradients: &mut [[QuadricGrad; ATTR_COUNT]],
+    indices: &[u32],
+    vertex_positions: &[Vector3],
+    vertex_attributes: &[[f32; ATTR_COUNT]],
+    remap: &[u32],
+) {
+    for i in indices.as_chunks::<3>().0 {
+        let [i0, i1, i2] = i;
+        let [i0, i1, i2] = [*i0 as usize, *i1 as usize, *i2 as usize];
+
+        let mut g = [QuadricGrad::default(); ATTR_COUNT];
+        let qa = Quadric::from_attributes(
+            &mut g,
+            &vertex_positions[i0],
+            &vertex_positions[i1],
+            &vertex_positions[i2],
+            &vertex_attributes[i0],
+            &vertex_attributes[i1],
+            &vertex_attributes[i2],
+        );
+
+        // TODO: This blends together attribute weights across attribute discontinuities, which is probably not a great idea
+        attribute_quadrics[remap[i0] as usize] += qa;
+        attribute_quadrics[remap[i1] as usize] += qa;
+        attribute_quadrics[remap[i2] as usize] += qa;
+
+        add_grads(&mut attribute_gradients[remap[i0] as usize], &g);
+        add_grads(&mut attribute_gradients[remap[i1] as usize], &g);
+        add_grads(&mut attribute_gradients[remap[i2] as usize], &g);
     }
 }
 
@@ -765,10 +964,13 @@ fn pick_edge_collapses(
     collapse_count
 }
 
-fn rank_edge_collapses(
+fn rank_edge_collapses<const ATTR_COUNT: usize>(
     collapses: &mut [Collapse],
     vertex_positions: &[Vector3],
+    vertex_attributes: &[[f32; ATTR_COUNT]],
     vertex_quadrics: &[Quadric],
+    attribute_quadrics: &[Quadric],
+    attribute_gradients: &[[QuadricGrad; ATTR_COUNT]],
     remap: &[u32],
 ) {
     for c in collapses {
@@ -780,11 +982,30 @@ fn rank_edge_collapses(
         let j0 = unsafe { if c.u.bidi != 0 { i1 } else { i0 } };
         let j1 = unsafe { if c.u.bidi != 0 { i0 } else { i1 } };
 
-        let qi = vertex_quadrics[remap[i0 as usize] as usize];
-        let qj = vertex_quadrics[remap[j0 as usize] as usize];
+        let ri0 = remap[i0 as usize] as usize;
+        let rj0 = remap[j0 as usize] as usize;
 
-        let ei = qi.error(&vertex_positions[i1 as usize]);
-        let ej = qj.error(&vertex_positions[j1 as usize]);
+        let qi = vertex_quadrics[ri0];
+        let qj = vertex_quadrics[rj0];
+
+        let mut ei = qi.error(&vertex_positions[i1 as usize]);
+        let mut ej = qj.error(&vertex_positions[j1 as usize]);
+
+        if ATTR_COUNT > 0 {
+            let agi = attribute_quadrics[ri0];
+            let agj = attribute_quadrics[rj0];
+
+            ei += agi.error_grad(
+                &attribute_gradients[ri0],
+                &vertex_positions[i1 as usize],
+                &vertex_attributes[i1 as usize],
+            );
+            ej += agj.error_grad(
+                &attribute_gradients[rj0],
+                &vertex_positions[j1 as usize],
+                &vertex_attributes[j1 as usize],
+            );
+        }
 
         // pick edge direction with minimal error
         c.v0 = if ei <= ej { i0 } else { j0 };
@@ -889,10 +1110,12 @@ fn sort_edge_collapses(sort_order: &mut [u32], collapses: &[Collapse]) {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn perform_edge_collapses(
+fn perform_edge_collapses<const ATTR_COUNT: usize>(
     collapse_remap: &mut [u32],
     collapse_locked: &mut [bool],
     vertex_quadrics: &mut [Quadric],
+    attribute_quadrics: &mut [Quadric],
+    attribute_gradients: &mut [[QuadricGrad; ATTR_COUNT]],
     collapses: &[Collapse],
     collapse_order: &[u32],
     remap: &[u32],
@@ -961,6 +1184,13 @@ fn perform_edge_collapses(
         assert_eq!(collapse_remap[r1] as usize, r1);
 
         vertex_quadrics[r1] += vertex_quadrics[r0];
+
+        if ATTR_COUNT > 0 {
+            attribute_quadrics[r1] += attribute_quadrics[r0];
+
+            let copy = attribute_gradients[r0].clone();
+            add_grads(&mut attribute_gradients[r1], &copy);
+        }
 
         match vertex_kind[i0] {
             VertexKind::Complex => {
@@ -1269,18 +1499,59 @@ bitflags! {
 /// * `destination`: must contain enough space for the target index buffer, worst case is `indices.len()` elements (**not** `target_index_count`)!
 /// * `target_error`: represents the error relative to mesh extents that can be tolerated, e.g. 0.01 = 1% deformation; value range [0..1]
 /// * `result_error`: can be None; when it's not None, it will contain the resulting (relative) error after simplification
-pub fn simplify<Vertex>(
+pub fn simplify<V>(
     destination: &mut [u32],
     indices: &[u32],
-    vertices: &[Vertex],
+    vertices: &[V],
     target_index_count: usize,
     target_error: f32,
     options: SimplificationOptions,
     result_error: Option<&mut f32>,
 ) -> usize
 where
-    Vertex: Position,
+    V: Vertex,
 {
+    simplify_with_attributes::<V, 0>(
+        destination,
+        indices,
+        vertices,
+        &[],
+        target_index_count,
+        target_error,
+        options,
+        result_error,
+    )
+}
+
+/// Mesh simplifier with attribute metric
+///
+/// The algorithm enhances [`simplify`] by incorporating attribute values into the error metric used to prioritize simplification order; see [`simplify`] documentation for details.
+/// Note that the number of attributes affects memory requirements and running time; this algorithm requires ~1.5x more memory and time compared to [`simplify`] when using 4 scalar attributes.
+///
+/// # Arguments
+///
+/// * `vertex_attributes`: should have attribute_count floats for each vertex
+/// * `attribute_weights`: should have attribute_count floats in total; the weights determine relative priority of attributes between each other and wrt position. The recommended weight range is [1e-3..1e-1], assuming attribute data is in [0..1] range.
+///
+/// TODO `target_error`/`result_error` currently use combined distance+attribute error; this may change in the future
+#[cfg(feature = "experimental")]
+pub fn simplify_with_attributes<V, const ATTR_COUNT: usize>(
+    destination: &mut [u32],
+    indices: &[u32],
+    vertices: &[V],
+    attribute_weights: &[f32; ATTR_COUNT],
+    target_index_count: usize,
+    target_error: f32,
+    options: SimplificationOptions,
+    result_error: Option<&mut f32>,
+) -> usize
+where
+    V: Vertex<ATTR_COUNT>,
+{
+    const {
+        assert!(ATTR_COUNT < MAX_ATTRIBUTES);
+    }
+
     assert_eq!(indices.len() % 3, 0);
     assert!(target_index_count <= indices.len());
 
@@ -1341,7 +1612,34 @@ where
     let mut vertex_positions = vec![Vector3::default(); vertices.len()]; // TODO: spare init?
     rescale_positions(&mut vertex_positions, vertices);
 
+    let vertex_attributes = if ATTR_COUNT > 0 {
+        let mut vertex_weighted_attrs = vec![[0f32; ATTR_COUNT]; vertices.len()];
+
+        for (weighted_attrs, vertex) in vertex_weighted_attrs.iter_mut().zip(vertices.iter()) {
+            for (weighted_attr, (attr, attr_weight)) in weighted_attrs
+                .iter_mut()
+                .zip(vertex.attrs().iter().zip(attribute_weights.iter()))
+            {
+                *weighted_attr = attr * attr_weight;
+            }
+        }
+
+        vertex_weighted_attrs
+    } else {
+        Vec::new()
+    };
+
     let mut vertex_quadrics = vec![Quadric::default(); vertices.len()];
+
+    let (mut attribute_quadrics, mut attribute_gradients) = if ATTR_COUNT > 0 {
+        (
+            vec![Quadric::default(); vertices.len()],
+            vec![[QuadricGrad::default(); ATTR_COUNT]; vertices.len()],
+        )
+    } else {
+        (Vec::new(), Vec::new())
+    };
+
     fill_face_quadrics(&mut vertex_quadrics, indices, &vertex_positions, &remap);
     fill_edge_quadrics(
         &mut vertex_quadrics,
@@ -1352,6 +1650,17 @@ where
         &loop_,
         &loopback,
     );
+
+    if ATTR_COUNT > 0 {
+        fill_attribute_quadrics::<ATTR_COUNT>(
+            &mut attribute_quadrics,
+            &mut attribute_gradients,
+            indices,
+            &vertex_positions,
+            &vertex_attributes,
+            &remap,
+        );
+    }
 
     result.copy_from_slice(indices);
 
@@ -1390,7 +1699,10 @@ where
         rank_edge_collapses(
             &mut edge_collapses[0..edge_collapse_count],
             &vertex_positions,
+            &vertex_attributes,
             &vertex_quadrics,
+            &attribute_quadrics,
+            &attribute_gradients,
             &remap,
         );
 
@@ -1417,6 +1729,8 @@ where
             &mut collapse_remap,
             &mut collapse_locked,
             &mut vertex_quadrics,
+            &mut attribute_quadrics,
+            &mut attribute_gradients,
             &edge_collapses,
             &collapse_order,
             &remap,
@@ -1474,16 +1788,16 @@ where
 /// * `target_error`: represents the error relative to mesh extents that can be tolerated, e.g. 0.01 = 1% deformation; value range [0..1]
 /// * `result_error`: can be None; when it's not None, it will contain the resulting (relative) error after simplification
 #[cfg(feature = "experimental")]
-pub fn simplify_sloppy<Vertex>(
+pub fn simplify_sloppy<V>(
     destination: &mut [u32],
     indices: &[u32],
-    vertices: &[Vertex],
+    vertices: &[V],
     target_index_count: usize,
     target_error: f32,
     result_error: Option<&mut f32>,
 ) -> usize
 where
-    Vertex: Position,
+    V: Vertex,
 {
     use experimental::*;
 
@@ -1648,9 +1962,9 @@ where
 ///
 /// * `destination`: must contain enough space for the target index buffer (`target_vertex_count` elements)
 #[cfg(feature = "experimental")]
-pub fn simplify_points<Vertex>(destination: &mut [u32], vertices: &[Vertex], target_vertex_count: usize) -> usize
+pub fn simplify_points<V>(destination: &mut [u32], vertices: &[V], target_vertex_count: usize) -> usize
 where
-    Vertex: Position,
+    V: Vertex,
 {
     use experimental::*;
 
@@ -1792,9 +2106,9 @@ where
 ///
 /// Absolute error must be **divided** by the scaling factor before passing it to [simplify] as `target_error`.
 /// Relative error returned by [simplify] via `result_error` must be **multiplied** by the scaling factor to get absolute error.
-pub fn simplify_scale<Vertex>(vertices: &[Vertex]) -> f32
+pub fn simplify_scale<V>(vertices: &[V]) -> f32
 where
-    Vertex: Position,
+    V: Vertex,
 {
     let (_minv, extent) = calc_pos_extents(vertices);
 
@@ -1805,22 +2119,22 @@ where
 mod test {
     use super::*;
 
-    struct Vertex {
+    struct TestVertex {
         x: f32,
         y: f32,
         z: f32,
     }
 
-    impl Position for Vertex {
+    impl Vertex for TestVertex {
         fn pos(&self) -> [f32; 3] {
             [self.x, self.y, self.z]
         }
     }
 
-    fn vb_from_slice(slice: &[f32]) -> Vec<Vertex> {
+    fn vb_from_slice(slice: &[f32]) -> Vec<TestVertex> {
         slice
             .chunks_exact(3)
-            .map(|v| Vertex {
+            .map(|v| TestVertex {
                 x: v[0],
                 y: v[1],
                 z: v[2],
@@ -2106,5 +2420,80 @@ mod test {
             expected.len()
         );
         assert_eq!(&dst[0..expected.len()], expected);
+    }
+
+    #[test]
+    fn test_simplify_attr() {
+        #[derive(Default, Clone, Copy)]
+        struct TestVertexWithAttributes([[f32; 3]; 2]);
+
+        impl Vertex<3> for TestVertexWithAttributes {
+            fn pos(&self) -> [f32; 3] {
+                self.0[0]
+            }
+
+            fn attrs(&self) -> [f32; 3] {
+                self.0[1]
+            }
+        }
+
+        let mut vb = [TestVertexWithAttributes::default(); 8 * 3];
+
+        for y in 0..8 {
+            // first four rows are a blue gradient, next four rows are a yellow gradient
+            let r = if y < 4 { 0.8 + y as f32 * 0.05 } else { 0.0 };
+            let g = if y < 4 { 0.8 + y as f32 * 0.05 } else { 0.0 };
+            let b = if y < 4 { 0.0 } else { 0.8 + (7 - y) as f32 * 0.05 };
+
+            for x in 0..3 {
+                let v = &mut vb[y * 3 + x].0;
+                v[0][0] = x as f32;
+                v[0][1] = y as f32;
+                v[0][2] = 0.0;
+                v[1][0] = r;
+                v[1][1] = g;
+                v[1][2] = b;
+            }
+        }
+
+        let mut ib = [[0u32; 6]; 7 * 2];
+
+        for y in 0..7 {
+            for x in 0..2 {
+                ib[y * 2 + x][0] = ((y + 0) * 3 + (x + 0)) as u32;
+                ib[y * 2 + x][1] = ((y + 0) * 3 + (x + 1)) as u32;
+                ib[y * 2 + x][2] = ((y + 1) * 3 + (x + 0)) as u32;
+                ib[y * 2 + x][3] = ((y + 1) * 3 + (x + 0)) as u32;
+                ib[y * 2 + x][4] = ((y + 0) * 3 + (x + 1)) as u32;
+                ib[y * 2 + x][5] = ((y + 1) * 3 + (x + 1)) as u32;
+            }
+        }
+
+        let ib = ib.iter().flatten().copied().collect::<Vec<_>>();
+
+        let attr_weights = [0.01, 0.01, 0.01];
+
+        let expected = [
+            [0, 2, 9, 9, 2, 11],
+            [9, 11, 12, 12, 11, 14],
+            [21, 12, 23, 12, 14, 23],
+        ];
+
+        let mut actual = vec![0u32; ib.len()];
+
+        assert_eq!(
+            simplify_with_attributes::<TestVertexWithAttributes, 3>(
+                &mut actual,
+                &ib,
+                &vb,
+                &attr_weights,
+                6 * 3,
+                1e-2,
+                SimplificationOptions::empty(),
+                None
+            ),
+            18
+        );
+        assert!(actual.iter().zip(expected.iter().flatten()).all(|(a, b)| a == b));
     }
 }

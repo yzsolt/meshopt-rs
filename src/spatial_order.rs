@@ -2,7 +2,7 @@
 
 use crate::Vector3;
 use crate::util::zero_inverse;
-use crate::vertex::{Position, calc_pos_extents};
+use crate::vertex::{Vertex, calc_pos_extents};
 
 // "Insert" two 0 bits after each of the 10 low bits of x
 #[inline(always)]
@@ -15,9 +15,9 @@ fn part_1_by_2(mut x: u32) -> u32 {
     x
 }
 
-fn compute_order<Vertex>(result: &mut [u32], vertices: &[Vertex])
+fn compute_order<V>(result: &mut [u32], vertices: &[V])
 where
-    Vertex: Position,
+    V: Vertex,
 {
     let (minv, extent) = calc_pos_extents(vertices);
 
@@ -80,9 +80,9 @@ fn radix_pass(destination: &mut [u32], source: &[u32], keys: &[u32], hist: &mut 
 /// # Arguments
 ///
 /// * `destination`: must contain enough space for the resulting remap table (`vertices.len()` elements)
-pub fn spatial_sort_remap<Vertex>(destination: &mut [u32], vertices: &[Vertex])
+pub fn spatial_sort_remap<V>(destination: &mut [u32], vertices: &[V])
 where
-    Vertex: Position,
+    V: Vertex,
 {
     let mut keys = vec![0; vertices.len()];
     compute_order(&mut keys, vertices);
@@ -114,9 +114,9 @@ where
 /// # Arguments
 ///
 /// * `destination`: must contain enough space for the resulting index buffer (`indices.len()` elements)
-pub fn spatial_sort_triangles<Vertex>(destination: &mut [u32], indices: &[u32], vertices: &[Vertex])
+pub fn spatial_sort_triangles<V>(destination: &mut [u32], indices: &[u32], vertices: &[V])
 where
-    Vertex: Position,
+    V: Vertex,
 {
     assert!(indices.len().is_multiple_of(3));
 
