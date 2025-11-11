@@ -825,7 +825,7 @@ where
 /// dot(view, cone_axis) >= cone_cutoff
 /// ```
 ///
-/// For perspective projection, you can the formula that needs cone apex in addition to axis & cutoff:
+/// For perspective projection, you can use the formula that needs cone apex in addition to axis & cutoff:
 /// ```glsl
 /// dot(normalize(cone_apex - camera_position), cone_axis) >= cone_cutoff
 /// ```
