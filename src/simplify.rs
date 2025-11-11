@@ -401,6 +401,27 @@ where
     extent
 }
 
+fn rescale_attributes<V, const ATTR_COUNT: usize>(
+    vertices: &[V],
+    attribute_weights: &[f32; ATTR_COUNT],
+) -> Vec<[f32; ATTR_COUNT]>
+where
+    V: Vertex<ATTR_COUNT>,
+{
+    let mut vertex_weighted_attrs = vec![[0f32; ATTR_COUNT]; vertices.len()];
+
+    for (weighted_attrs, vertex) in vertex_weighted_attrs.iter_mut().zip(vertices.iter()) {
+        for (weighted_attr, (attr, attr_weight)) in weighted_attrs
+            .iter_mut()
+            .zip(vertex.attrs().iter().zip(attribute_weights.iter()))
+        {
+            *weighted_attr = attr * attr_weight;
+        }
+    }
+
+    vertex_weighted_attrs
+}
+
 union CollapseUnion {
     bidi: u32,
     error: f32,
@@ -1014,67 +1035,6 @@ fn rank_edge_collapses<const ATTR_COUNT: usize>(
     }
 }
 
-#[cfg(feature = "trace")]
-fn dump_edge_collapses(collapses: &[Collapse], vertex_kind: &[VertexKind]) {
-    let mut ckinds = [[0usize; KIND_COUNT]; KIND_COUNT];
-    let mut cerrors = [[f32::MAX; KIND_COUNT]; KIND_COUNT];
-
-    for c in collapses {
-        let i0 = c.v0;
-        let i1 = c.v1;
-
-        let k0 = vertex_kind[i0 as usize] as usize;
-        let k1 = vertex_kind[i1 as usize] as usize;
-
-        ckinds[k0][k1] += 1;
-        cerrors[k0][k1] = cerrors[k0][k1].min(unsafe { c.u.error });
-    }
-
-    for k0 in 0..KIND_COUNT {
-        for k1 in 0..KIND_COUNT {
-            if ckinds[k0][k1] != 0 {
-                println!(
-                    "collapses {k0} -> {k1}: {}, min error {:e}",
-                    ckinds[k0][k1],
-                    if ckinds[k0][k1] != 0 {
-                        cerrors[k0][k1].sqrt()
-                    } else {
-                        0.0
-                    }
-                );
-            }
-        }
-    }
-}
-
-#[cfg(feature = "trace")]
-fn dump_locked_collapses(indices: &[u32], vertex_kind: &[VertexKind]) {
-    let mut locked_collapses = [[0usize; KIND_COUNT]; KIND_COUNT];
-
-    for i in indices.chunks_exact(3) {
-        const NEXT: [usize; 3] = [1, 2, 0];
-
-        for e in 0..3 {
-            let i0 = i[e] as usize;
-            let i1 = i[NEXT[e]] as usize;
-
-            let k0 = vertex_kind[i0].index();
-            let k1 = vertex_kind[i1].index();
-
-            locked_collapses[k0][k1] += (!CAN_COLLAPSE[k0][k1] && !CAN_COLLAPSE[k1][k0]) as usize;
-        }
-    }
-
-    #[allow(clippy::needless_range_loop)]
-    for k0 in 0..KIND_COUNT {
-        for k1 in 0..KIND_COUNT {
-            if locked_collapses[k0][k1] != 0 {
-                println!("locked collapses {k0} -> {k1}: {}", locked_collapses[k0][k1]);
-            }
-        }
-    }
-}
-
 fn sort_edge_collapses(sort_order: &mut [u32], collapses: &[Collapse]) {
     const SORT_BITS: usize = 11;
 
@@ -1548,6 +1508,31 @@ pub fn simplify_with_attributes<V, const ATTR_COUNT: usize>(
 where
     V: Vertex<ATTR_COUNT>,
 {
+    simplify_edge(
+        destination,
+        indices,
+        vertices,
+        attribute_weights,
+        target_index_count,
+        target_error,
+        options,
+        result_error,
+    )
+}
+
+fn simplify_edge<V, const ATTR_COUNT: usize>(
+    destination: &mut [u32],
+    indices: &[u32],
+    vertices: &[V],
+    attribute_weights: &[f32; ATTR_COUNT],
+    target_index_count: usize,
+    target_error: f32,
+    options: SimplificationOptions,
+    result_error: Option<&mut f32>,
+) -> usize
+where
+    V: Vertex<ATTR_COUNT>,
+{
     const {
         assert!(ATTR_COUNT < MAX_ATTRIBUTES);
     }
@@ -1613,18 +1598,7 @@ where
     rescale_positions(&mut vertex_positions, vertices);
 
     let vertex_attributes = if ATTR_COUNT > 0 {
-        let mut vertex_weighted_attrs = vec![[0f32; ATTR_COUNT]; vertices.len()];
-
-        for (weighted_attrs, vertex) in vertex_weighted_attrs.iter_mut().zip(vertices.iter()) {
-            for (weighted_attr, (attr, attr_weight)) in weighted_attrs
-                .iter_mut()
-                .zip(vertex.attrs().iter().zip(attribute_weights.iter()))
-            {
-                *weighted_attr = attr * attr_weight;
-            }
-        }
-
-        vertex_weighted_attrs
+        rescale_attributes(vertices, attribute_weights)
     } else {
         Vec::new()
     };
@@ -1706,9 +1680,6 @@ where
             &remap,
         );
 
-        #[cfg(feature = "trace")]
-        dump_edge_collapses(&edge_collapses[0..edge_collapse_count], &vertex_kind);
-
         sort_edge_collapses(&mut collapse_order, &edge_collapses[0..edge_collapse_count]);
 
         let triangle_collapse_goal = (result_count - target_index_count) / 3;
@@ -1762,9 +1733,6 @@ where
         "result: {result_count} triangles, error: {:e}; total {pass_count} passes",
         result_error_max.sqrt()
     );
-
-    #[cfg(feature = "trace")]
-    dump_locked_collapses(result, &vertex_kind);
 
     // result_error is quadratic; we need to remap it back to linear
     if let Some(result_error) = result_error {
