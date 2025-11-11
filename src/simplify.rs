@@ -760,7 +760,7 @@ fn fill_edge_quadrics(
     loopback: &[u32],
 ) {
     for i in indices.chunks_exact(3) {
-        const NEXT: [usize; 3] = [1, 2, 0];
+        const NEXT: [usize; 4] = [1, 2, 0, 1];
 
         for e in 0..3 {
             let i0 = i[e] as usize;
@@ -790,7 +790,7 @@ fn fill_edge_quadrics(
                 continue;
             }
 
-            let i2 = i[NEXT[NEXT[e]]] as usize;
+            let i2 = i[NEXT[e + 1]] as usize;
 
             // we try hard to maintain border edge geometry; seam edges can move more freely
             // due to topological restrictions on collapses, seam quadrics slightly improves collapse structure but aren't critical
