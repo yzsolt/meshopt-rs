@@ -31,22 +31,22 @@ struct Edge {
 
 #[derive(Default)]
 struct EdgeAdjacency {
-    counts: Vec<u32>,
     offsets: Vec<u32>,
     data: Vec<Edge>,
 }
 
 fn prepare_edge_adjacency(adjacency: &mut EdgeAdjacency, index_count: usize, vertex_count: usize) {
-    adjacency.counts = vec![0; vertex_count];
-    adjacency.offsets = vec![0; vertex_count];
+    adjacency.offsets = vec![0; vertex_count + 1];
     adjacency.data = vec![Edge::default(); index_count];
 }
 
 fn update_edge_adjacency(adjacency: &mut EdgeAdjacency, indices: &[u32], remap: Option<&[u32]>) {
     let face_count = indices.len() / 3;
 
+    let offsets = &mut adjacency.offsets[1..];
+
     // fill edge counts
-    adjacency.counts.fill(0);
+    offsets.fill(0);
 
     for index in indices {
         let v = if let Some(r) = remap {
@@ -55,15 +55,16 @@ fn update_edge_adjacency(adjacency: &mut EdgeAdjacency, indices: &[u32], remap: 
             *index as usize
         };
 
-        adjacency.counts[v] += 1;
+        offsets[v] += 1;
     }
 
     // fill offset table
     let mut offset = 0;
 
-    for (o, count) in adjacency.offsets.iter_mut().zip(adjacency.counts.iter()) {
-        *o = offset;
-        offset += *count;
+    for count in offsets.iter_mut() {
+        let c = *count;
+        *count = offset;
+        offset += c;
     }
 
     assert_eq!(offset as usize, indices.len());
@@ -80,25 +81,22 @@ fn update_edge_adjacency(adjacency: &mut EdgeAdjacency, indices: &[u32], remap: 
             c = r[c as usize];
         }
 
-        adjacency.data[adjacency.offsets[a as usize] as usize].next = b;
-        adjacency.data[adjacency.offsets[a as usize] as usize].prev = c;
-        adjacency.offsets[a as usize] += 1;
+        adjacency.data[offsets[a as usize] as usize].next = b;
+        adjacency.data[offsets[a as usize] as usize].prev = c;
+        offsets[a as usize] += 1;
 
-        adjacency.data[adjacency.offsets[b as usize] as usize].next = c;
-        adjacency.data[adjacency.offsets[b as usize] as usize].prev = a;
-        adjacency.offsets[b as usize] += 1;
+        adjacency.data[offsets[b as usize] as usize].next = c;
+        adjacency.data[offsets[b as usize] as usize].prev = a;
+        offsets[b as usize] += 1;
 
-        adjacency.data[adjacency.offsets[c as usize] as usize].next = a;
-        adjacency.data[adjacency.offsets[c as usize] as usize].prev = b;
-        adjacency.offsets[c as usize] += 1;
+        adjacency.data[offsets[c as usize] as usize].next = a;
+        adjacency.data[offsets[c as usize] as usize].prev = b;
+        offsets[c as usize] += 1;
     }
 
-    // fix offsets that have been disturbed by the previous pass
-    for (offset, count) in adjacency.offsets.iter_mut().zip(adjacency.counts.iter()) {
-        assert!(*offset >= *count);
-
-        *offset -= *count;
-    }
+    // finalize offsets
+    adjacency.offsets[0] = 0;
+    assert_eq!(*adjacency.offsets.last().unwrap() as usize, indices.len());
 }
 
 mod hash {
@@ -225,10 +223,10 @@ const HAS_OPPOSITE: [[bool; KIND_COUNT]; KIND_COUNT] = [
 ];
 
 fn has_edge(adjacency: &EdgeAdjacency, a: u32, b: u32) -> bool {
-    let count = adjacency.counts[a as usize] as usize;
-    let offset = adjacency.offsets[a as usize] as usize;
+    let start = adjacency.offsets[a as usize] as usize;
+    let end = adjacency.offsets[a as usize + 1] as usize;
 
-    let edges = &adjacency.data[offset..offset + count];
+    let edges = &adjacency.data[start..end];
 
     edges.iter().any(|d| d.next == b)
 }
@@ -252,10 +250,10 @@ fn classify_vertices(
 
     #[allow(clippy::needless_range_loop)]
     for vertex in 0..vertex_count {
-        let offset = adjacency.offsets[vertex] as usize;
-        let count = adjacency.counts[vertex] as usize;
+        let start = adjacency.offsets[vertex as usize] as usize;
+        let end = adjacency.offsets[vertex as usize + 1] as usize;
 
-        let edges = &adjacency.data[offset..offset + count];
+        let edges = &adjacency.data[start..end];
 
         for edge in edges {
             let target = edge.next;
@@ -891,9 +889,9 @@ fn has_triangle_flips(
     let v0 = vertex_positions[i0];
     let v1 = vertex_positions[i1];
 
-    let offset = adjacency.offsets[i0] as usize;
-    let count = adjacency.counts[i0] as usize;
-    let edges = &adjacency.data[offset..offset + count];
+    let start = adjacency.offsets[i0] as usize;
+    let end = adjacency.offsets[i0 + 1] as usize;
+    let edges = &adjacency.data[start..end];
 
     for edge in edges {
         let a = collapse_remap[edge.next as usize] as usize;
