@@ -458,6 +458,7 @@ struct Collapse {
 
 #[derive(Clone, Copy, Default, Debug)]
 struct Quadric {
+    // a00*x^2 + a11*y^2 + a22*z^2 + 2*(a10*xy + a20*xz + a21*yz) + b0*x + b1*y + b2*z + c
     a00: f32,
     a11: f32,
     a22: f32,
@@ -488,24 +489,6 @@ impl AddAssign for Quadric {
 }
 
 impl Quadric {
-    #[cfg(feature = "experimental")]
-    pub fn from_point(x: f32, y: f32, z: f32, w: f32) -> Self {
-        // we need to encode (x - X) ^ 2 + (y - Y)^2 + (z - Z)^2 into the quadric
-        Self {
-            a00: w,
-            a11: w,
-            a22: w,
-            a10: 0.0,
-            a20: 0.0,
-            a21: 0.0,
-            b0: -2.0 * x * w,
-            b1: -2.0 * y * w,
-            b2: -2.0 * z * w,
-            c: (x * x + y * y + z * z) * w,
-            w,
-        }
-    }
-
     fn from_plane(a: f32, b: f32, c: f32, d: f32, w: f32) -> Self {
         let aw = a * w;
         let bw = b * w;
@@ -723,6 +706,7 @@ impl Quadric {
 
 #[derive(Debug, Default, Clone, Copy)]
 struct QuadricGrad {
+    // gx*x + gy*y + gz*z + gw
     gx: f32,
     gy: f32,
     gz: f32,
@@ -736,6 +720,14 @@ impl AddAssign for QuadricGrad {
         self.gz += other.gz;
         self.gw += other.gw;
     }
+}
+
+#[derive(Default, Debug, Clone, Copy)]
+struct Reservoir {
+    x: f32,
+    y: f32,
+    z: f32,
+    w: f32,
 }
 
 fn fill_face_quadrics(vertex_quadrics: &mut [Quadric], indices: &[u32], vertex_positions: &[Vector3], remap: &[u32]) {
@@ -911,11 +903,7 @@ fn has_triangle_flips(
     false
 }
 
-fn bound_edge_collapses(
-    adjacency: &EdgeAdjacency,
-    index_count: usize,
-    vertex_kind: &[VertexKind],
-) -> usize {
+fn bound_edge_collapses(adjacency: &EdgeAdjacency, index_count: usize, vertex_kind: &[VertexKind]) -> usize {
     let mut dual_count = 0;
 
     for (k, w) in vertex_kind.iter().zip(adjacency.offsets.windows(2)) {
@@ -1383,11 +1371,23 @@ mod experimental {
         }
     }
 
-    pub fn fill_cell_quadrics2(cell_quadrics: &mut [Quadric], vertex_positions: &[Vector3], vertex_cells: &[u32]) {
-        for (c, v) in vertex_cells.iter().zip(vertex_positions.iter()) {
-            let q = Quadric::from_point(v.x, v.y, v.z, 1.0);
+    pub fn fill_cell_reservoirs(cell_reservoirs: &mut [Reservoir], vertex_positions: &[Vector3], vertex_cells: &[u32]) {
+        for (cell, v) in vertex_cells.iter().zip(vertex_positions.iter()) {
+            let r = &mut cell_reservoirs[*cell as usize];
 
-            cell_quadrics[*c as usize] += q;
+            let w = 1.0;
+            r.x += v.x * w;
+            r.y += v.y * w;
+            r.z += v.z * w;
+            r.w += w;
+        }
+
+        for r in cell_reservoirs {
+            let iw = zero_inverse(r.w);
+
+            r.x *= iw;
+            r.y *= iw;
+            r.z *= iw;
         }
     }
 
@@ -1401,6 +1401,26 @@ mod experimental {
         for ((i, c), v) in vertex_cells.iter().enumerate().zip(vertex_positions.iter()) {
             let cell = *c as usize;
             let error = cell_quadrics[cell].error(v);
+
+            if cell_remap[cell] == INVALID_INDEX || cell_errors[cell] > error {
+                cell_remap[cell] = i as u32;
+                cell_errors[cell] = error;
+            }
+        }
+    }
+
+    pub fn fill_cell_remap2(
+        cell_remap: &mut [u32],
+        cell_errors: &mut [f32],
+        vertex_cells: &[u32],
+        cell_reservoirs: &[Reservoir],
+        vertex_positions: &[Vector3],
+    ) {
+        for ((i, c), v) in vertex_cells.iter().enumerate().zip(vertex_positions.iter()) {
+            let cell = *c as usize;
+            let r = &cell_reservoirs[cell];
+
+            let error = (v.x - r.x) * (v.x - r.x) + (v.y - r.y) * (v.y - r.y) + (v.z - r.z) * (v.z - r.z);
 
             if cell_remap[cell] == INVALID_INDEX || cell_errors[cell] > error {
                 cell_remap[cell] = i as u32;
@@ -2073,20 +2093,20 @@ where
     table.clear();
     let cell_count = fill_vertex_cells(&mut table, &mut vertex_cells, &vertex_ids);
 
-    // build a quadric for each target cell
-    let mut cell_quadrics = vec![Quadric::default(); cell_count];
+    // accumulate points into a reservoir for each target cell
+    let mut cell_reservoirs = vec![Reservoir::default(); cell_count];
 
-    fill_cell_quadrics2(&mut cell_quadrics, &vertex_positions, &vertex_cells);
+    fill_cell_reservoirs(&mut cell_reservoirs, &vertex_positions, &vertex_cells);
 
     // for each target cell, find the vertex with the minimal error
     let mut cell_remap = vec![INVALID_INDEX; cell_count];
     let mut cell_errors = vec![0.0; cell_count];
 
-    fill_cell_remap(
+    fill_cell_remap2(
         &mut cell_remap,
         &mut cell_errors,
         &vertex_cells,
-        &cell_quadrics,
+        &cell_reservoirs,
         &vertex_positions,
     );
 
@@ -2095,7 +2115,16 @@ where
     destination[0..cell_count].copy_from_slice(&cell_remap);
 
     #[cfg(feature = "trace")]
-    println!("result: {cell_count} cells");
+    {
+        // compute error
+        let mut result_error = 0.0f32;
+
+        for cell_error in &cell_errors {
+            result_error = result_error.max(*cell_error);
+        }
+
+        println!("result: {} cells, {} error", cell_errors.len(), result_error.sqrt());
+    }
 
     cell_count
 }
@@ -2267,41 +2296,41 @@ mod test {
         // the wrong collapse is picked instead.
         #[rustfmt::skip]
         let vb = vb_from_slice(&[
-            1.000000, 1.000000, -1.000000, 
-            1.000000, 1.000000, 1.000000, 
-            1.000000, -1.000000, 1.000000, 
-            1.000000, -0.200000, -0.200000, 
-            1.000000, 0.200000, -0.200000, 
-            1.000000, -0.200000, 0.200000, 
-            1.000000, 0.200000, 0.200000, 
-            1.000000, 0.500000, -0.500000, 
+            1.000000, 1.000000, -1.000000,
+            1.000000, 1.000000, 1.000000,
+            1.000000, -1.000000, 1.000000,
+            1.000000, -0.200000, -0.200000,
+            1.000000, 0.200000, -0.200000,
+            1.000000, -0.200000, 0.200000,
+            1.000000, 0.200000, 0.200000,
+            1.000000, 0.500000, -0.500000,
             1.000000, -1.000000, 0.000000,
         ]);
 
         // the collapse we expect is 7 -> 0
         #[rustfmt::skip]
         let ib = [
-            7, 4, 3, 
-            1, 2, 5, 
-            7, 1, 6, 
+            7, 4, 3,
+            1, 2, 5,
+            7, 1, 6,
             7, 8, 0, // gets removed
-            7, 6, 4, 
-            8, 5, 2, 
-            8, 7, 3, 
-            8, 3, 5, 
-            5, 6, 1, 
+            7, 6, 4,
+            8, 5, 2,
+            8, 7, 3,
+            8, 3, 5,
+            5, 6, 1,
             7, 0, 1, // gets removed
         ];
 
         #[rustfmt::skip]
         let expected = [
-            0, 4, 3, 
-            1, 2, 5, 
-            0, 1, 6, 
-            0, 6, 4, 
-            8, 5, 2, 
-            8, 0, 3, 
-            8, 3, 5, 
+            0, 4, 3,
+            1, 2, 5,
+            0, 1, 6,
+            0, 6, 4,
+            8, 5, 2,
+            8, 0, 3,
+            8, 3, 5,
             5, 6, 1,
         ];
 
@@ -2330,7 +2359,7 @@ mod test {
             0.000000, 2.000000, 0.000000,
             1.000000, 0.000000, 0.000000,
             2.000000, 0.000000, 0.000000,
-            1.000000, 1.000000, 0.000000, 
+            1.000000, 1.000000, 0.000000,
         ]);
 
         // 0 1 2
