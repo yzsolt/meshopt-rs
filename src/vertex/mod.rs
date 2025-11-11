@@ -28,10 +28,16 @@ impl From<VertexEncodingVersion> for u8 {
 }
 
 pub trait Vertex<const ATTR_COUNT: usize = 0> {
+    const HAS_COLORS: bool = false;
+
     fn pos(&self) -> [f32; 3];
 
     fn attrs(&self) -> [f32; ATTR_COUNT] {
         [0f32; ATTR_COUNT]
+    }
+
+    fn colors(&self) -> [f32; 3] {
+        [0f32; 3]
     }
 }
 

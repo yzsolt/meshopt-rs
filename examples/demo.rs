@@ -707,7 +707,7 @@ fn simplify_mesh_points(mesh: &Mesh, threshold: f32) {
     let target_vertex_count = (mesh.vertices.len() as f32 * threshold) as usize;
 
     let mut indices = vec![0; target_vertex_count];
-    let size = simplify_points(&mut indices, &mesh.vertices, target_vertex_count);
+    let size = simplify_points(&mut indices, &mesh.vertices, target_vertex_count, 0.0);
     indices.resize(size, Default::default());
 
     let duration = start.elapsed();

@@ -727,6 +727,9 @@ struct Reservoir {
     x: f32,
     y: f32,
     z: f32,
+    r: f32,
+    g: f32,
+    b: f32,
     w: f32,
 }
 
@@ -1371,15 +1374,26 @@ mod experimental {
         }
     }
 
-    pub fn fill_cell_reservoirs(cell_reservoirs: &mut [Reservoir], vertex_positions: &[Vector3], vertex_cells: &[u32]) {
-        for (cell, v) in vertex_cells.iter().zip(vertex_positions.iter()) {
+    pub fn fill_cell_reservoirs<V>(
+        cell_reservoirs: &mut [Reservoir],
+        vertex_positions: &[Vector3],
+        vertices: &[V],
+        vertex_cells: &[u32],
+    ) where
+        V: Vertex,
+    {
+        for (cell, (vp, v)) in vertex_cells.iter().zip(vertex_positions.iter().zip(vertices.iter())) {
             let r = &mut cell_reservoirs[*cell as usize];
 
-            let w = 1.0;
-            r.x += v.x * w;
-            r.y += v.y * w;
-            r.z += v.z * w;
-            r.w += w;
+            let color = if V::HAS_COLORS { v.colors() } else { [0f32; 3] };
+
+            r.x += vp.x;
+            r.y += vp.y;
+            r.z += vp.z;
+            r.r += color[0];
+            r.g += color[1];
+            r.b += color[2];
+            r.w += 1.0;
         }
 
         for r in cell_reservoirs {
@@ -1388,6 +1402,9 @@ mod experimental {
             r.x *= iw;
             r.y *= iw;
             r.z *= iw;
+            r.r *= iw;
+            r.g *= iw;
+            r.b *= iw;
         }
     }
 
@@ -1409,18 +1426,32 @@ mod experimental {
         }
     }
 
-    pub fn fill_cell_remap2(
+    pub fn fill_cell_remap2<V>(
         cell_remap: &mut [u32],
         cell_errors: &mut [f32],
         vertex_cells: &[u32],
         cell_reservoirs: &[Reservoir],
         vertex_positions: &[Vector3],
-    ) {
-        for ((i, c), v) in vertex_cells.iter().enumerate().zip(vertex_positions.iter()) {
+        vertices: &[V],
+        color_weight: f32,
+    ) where
+        V: Vertex,
+    {
+        for ((i, c), (vp, v)) in vertex_cells
+            .iter()
+            .enumerate()
+            .zip(vertex_positions.iter().zip(vertices.iter()))
+        {
             let cell = *c as usize;
             let r = &cell_reservoirs[cell];
 
-            let error = (v.x - r.x) * (v.x - r.x) + (v.y - r.y) * (v.y - r.y) + (v.z - r.z) * (v.z - r.z);
+            let color = if V::HAS_COLORS { v.colors() } else { [0f32; 3] };
+
+            let pos_error = (vp.x - r.x) * (vp.x - r.x) + (vp.y - r.y) * (vp.y - r.y) + (vp.z - r.z) * (vp.z - r.z);
+            let col_error = (color[0] - r.r) * (color[0] - r.r)
+                + (color[1] - r.g) * (color[1] - r.g)
+                + (color[2] - r.b) * (color[2] - r.b);
+            let error = pos_error + color_weight * col_error;
 
             if cell_remap[cell] == INVALID_INDEX || cell_errors[cell] > error {
                 cell_remap[cell] = i as u32;
@@ -1980,7 +2011,12 @@ where
 ///
 /// * `destination`: must contain enough space for the target index buffer (`target_vertex_count` elements)
 #[cfg(feature = "experimental")]
-pub fn simplify_points<V>(destination: &mut [u32], vertices: &[V], target_vertex_count: usize) -> usize
+pub fn simplify_points<V>(
+    destination: &mut [u32],
+    vertices: &[V],
+    target_vertex_count: usize,
+    color_weight: f32,
+) -> usize
 where
     V: Vertex,
 {
@@ -2096,7 +2132,7 @@ where
     // accumulate points into a reservoir for each target cell
     let mut cell_reservoirs = vec![Reservoir::default(); cell_count];
 
-    fill_cell_reservoirs(&mut cell_reservoirs, &vertex_positions, &vertex_cells);
+    fill_cell_reservoirs(&mut cell_reservoirs, &vertex_positions, &vertices, &vertex_cells);
 
     // for each target cell, find the vertex with the minimal error
     let mut cell_remap = vec![INVALID_INDEX; cell_count];
@@ -2108,6 +2144,8 @@ where
         &vertex_cells,
         &cell_reservoirs,
         &vertex_positions,
+        &vertices,
+        color_weight,
     );
 
     // copy results to the output
@@ -2285,7 +2323,7 @@ mod test {
         let vb = vb_from_slice(&[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]);
 
         // simplifying down to 0 points results in 0 immediately
-        assert_eq!(simplify_points(&mut dst, &vb, 0), 0);
+        assert_eq!(simplify_points(&mut dst, &vb, 0, 0.0), 0);
     }
 
     #[test]
