@@ -87,7 +87,7 @@ pub fn dequantize_half(h: u16) -> f32 {
     let em = (h & 0x7fff) as u32;
 
     // bias exponent and pad mantissa with 0; 112 is relative exponent bias (127-15)
-    let mut r = ((em + (112 << 10)) << 13) as u32;
+    let mut r = (em + (112 << 10)) << 13;
 
     // denormal: flush to zero
     r = if em < (1 << 10) { 0 } else { r };

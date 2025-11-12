@@ -249,8 +249,8 @@ fn classify_vertices(
 
     #[allow(clippy::needless_range_loop)]
     for vertex in 0..vertex_count {
-        let start = adjacency.offsets[vertex as usize] as usize;
-        let end = adjacency.offsets[vertex as usize + 1] as usize;
+        let start = adjacency.offsets[vertex] as usize;
+        let end = adjacency.offsets[vertex + 1] as usize;
 
         let edges = &adjacency.data[start..end];
 
@@ -593,8 +593,10 @@ impl Quadric {
         let gz1 = (d11 * v0.z - d01 * v1.z) * denomr;
         let gz2 = (d00 * v1.z - d01 * v0.z) * denomr;
 
-        let mut q = Quadric::default();
-        q.w = w;
+        let mut q = Quadric {
+            w,
+            ..Default::default()
+        };
 
         for (k, gg) in g.iter_mut().enumerate() {
             let a0 = va0[k];
@@ -1166,7 +1168,7 @@ fn perform_edge_collapses<const ATTR_COUNT: usize>(
         if ATTR_COUNT > 0 {
             attribute_quadrics[r1] += attribute_quadrics[r0];
 
-            let copy = attribute_gradients[r0].clone();
+            let copy = attribute_gradients[r0];
             add_grads(&mut attribute_gradients[r1], &copy);
         }
 
@@ -1573,6 +1575,7 @@ where
 ///
 /// TODO `target_error`/`result_error` currently use combined distance+attribute error; this may change in the future
 #[cfg(feature = "experimental")]
+#[allow(clippy::too_many_arguments)]
 pub fn simplify_with_attributes<V, const ATTR_COUNT: usize>(
     destination: &mut [u32],
     indices: &[u32],
@@ -1598,6 +1601,7 @@ where
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn simplify_edge<V, const ATTR_COUNT: usize>(
     destination: &mut [u32],
     indices: &[u32],
@@ -2132,7 +2136,7 @@ where
     // accumulate points into a reservoir for each target cell
     let mut cell_reservoirs = vec![Reservoir::default(); cell_count];
 
-    fill_cell_reservoirs(&mut cell_reservoirs, &vertex_positions, &vertices, &vertex_cells);
+    fill_cell_reservoirs(&mut cell_reservoirs, &vertex_positions, vertices, &vertex_cells);
 
     // for each target cell, find the vertex with the minimal error
     let mut cell_remap = vec![INVALID_INDEX; cell_count];
@@ -2144,7 +2148,7 @@ where
         &vertex_cells,
         &cell_reservoirs,
         &vertex_positions,
-        &vertices,
+        vertices,
         color_weight,
     );
 
