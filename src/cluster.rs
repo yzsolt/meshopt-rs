@@ -2,7 +2,7 @@
 
 use crate::quantize::quantize_snorm;
 use crate::util::zero_inverse;
-use crate::vertex::{Position, TriangleAdjacency, build_triangle_adjacency};
+use crate::vertex::{TriangleAdjacency, Vertex, build_triangle_adjacency};
 
 const UNUSED: u8 = 0xff;
 
@@ -127,7 +127,7 @@ struct Cone {
     nz: f32,
 }
 
-impl Position for Cone {
+impl Vertex for Cone {
     fn pos(&self) -> [f32; 3] {
         [self.px, self.py, self.pz]
     }
@@ -163,9 +163,9 @@ fn get_meshlet_cone(acc: &Cone, triangle_count: u32) -> Cone {
     result
 }
 
-fn compute_triangle_cones<Vertex>(triangles: &mut [Cone], indices: &[u32], vertices: &[Vertex]) -> f32
+fn compute_triangle_cones<V>(triangles: &mut [Cone], indices: &[u32], vertices: &[V]) -> f32
 where
-    Vertex: Position,
+    V: Vertex,
 {
     let face_count = indices.len() / 3;
 
@@ -305,7 +305,7 @@ impl Default for KdNodeType {
 
 fn kd_tree_partition<Point>(indices: &mut [u32], points: &[Point], axis: u32, pivot: f32) -> usize
 where
-    Point: Position,
+    Point: Vertex,
 {
     let mut m = 0;
 
@@ -352,7 +352,7 @@ fn kd_tree_build<Point>(
     leaf_size: usize,
 ) -> usize
 where
-    Point: Position,
+    Point: Vertex,
 {
     assert!(!indices.is_empty());
 
@@ -425,7 +425,7 @@ fn kd_tree_nearest<Point>(
     result: &mut u32,
     limit: &mut f32,
 ) where
-    Point: Position,
+    Point: Vertex,
 {
     let node = &nodes[root as usize];
 
@@ -642,18 +642,18 @@ fn get_neighbor_triangle(
 /// * `max_vertices` and `max_triangles`: must not exceed implementation limits (`max_vertices` <= 255 - not 256!, `max_triangles` <= 512)
 /// * `cone_weight`: should be set to 0 when cone culling is not used, and a value between 0 and 1 otherwise to balance between cluster size and cone culling efficiency
 #[allow(clippy::too_many_arguments)]
-pub fn build_meshlets<Vertex>(
+pub fn build_meshlets<V>(
     meshlets: &mut [Meshlet],
     meshlet_vertices: &mut [u32],
     meshlet_triangles: &mut [u8],
     indices: &[u32],
-    vertices: &[Vertex],
+    vertices: &[V],
     max_vertices: usize,
     max_triangles: usize,
     cone_weight: f32,
 ) -> usize
 where
-    Vertex: Position,
+    V: Vertex,
 {
     assert!(indices.len().is_multiple_of(3));
 
@@ -825,7 +825,7 @@ where
 /// dot(view, cone_axis) >= cone_cutoff
 /// ```
 ///
-/// For perspective projection, you can the formula that needs cone apex in addition to axis & cutoff:
+/// For perspective projection, you can use the formula that needs cone apex in addition to axis & cutoff:
 /// ```glsl
 /// dot(normalize(cone_apex - camera_position), cone_axis) >= cone_cutoff
 /// ```
@@ -846,9 +846,9 @@ where
 /// # Arguments
 ///
 /// * `indices`: should be smaller than or equal to 256*3 (the function assumes clusters of limited size)
-pub fn compute_cluster_bounds<Vertex>(indices: &[u32], vertices: &[Vertex]) -> Bounds
+pub fn compute_cluster_bounds<V>(indices: &[u32], vertices: &[V]) -> Bounds
 where
-    Vertex: Position,
+    V: Vertex,
 {
     assert!(indices.len().is_multiple_of(3));
     assert!(indices.len() / 3 <= MESHLET_MAX_TRIANGLES);
@@ -1005,9 +1005,9 @@ where
 /// Creates bounding volumes that can be used for frustum, backface and occlusion culling.
 ///
 /// Same as [compute_cluster_bounds] but with meshlets as input.
-pub fn compute_meshlet_bounds<Vertex>(meshlet_vertices: &[u32], meshlet_triangles: &[u8], vertices: &[Vertex]) -> Bounds
+pub fn compute_meshlet_bounds<V>(meshlet_vertices: &[u32], meshlet_triangles: &[u8], vertices: &[V]) -> Bounds
 where
-    Vertex: Position,
+    V: Vertex,
 {
     assert_eq!(meshlet_triangles.len() % 3, 0);
 
@@ -1030,22 +1030,22 @@ where
 mod test {
     use super::*;
 
-    struct Vertex {
+    struct TestVertex {
         x: f32,
         y: f32,
         z: f32,
     }
 
-    impl Position for Vertex {
+    impl Vertex for TestVertex {
         fn pos(&self) -> [f32; 3] {
             [self.x, self.y, self.z]
         }
     }
 
-    fn vb_from_slice(slice: &[f32]) -> Vec<Vertex> {
+    fn vb_from_slice(slice: &[f32]) -> Vec<TestVertex> {
         slice
             .chunks_exact(3)
-            .map(|v| Vertex {
+            .map(|v| TestVertex {
                 x: v[0],
                 y: v[1],
                 z: v[2],
@@ -1060,7 +1060,7 @@ mod test {
         let ib1 = [0, 1, 2];
 
         // all of the bounds below are degenerate as they use 0 triangles, one topology-degenerate triangle and one position-degenerate triangle respectively
-        let bounds0 = compute_cluster_bounds::<Vertex>(&[], &[]);
+        let bounds0 = compute_cluster_bounds::<TestVertex>(&[], &[]);
         let boundsd = compute_cluster_bounds(&ibd, &vbd);
         let bounds1 = compute_cluster_bounds(&ib1, &vbd);
 

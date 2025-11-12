@@ -3,7 +3,7 @@
 use crate::Vector3;
 use crate::quantize::quantize_unorm;
 use crate::util::zero_inverse;
-use crate::vertex::{Position, calc_pos_extents};
+use crate::vertex::{Vertex, calc_pos_extents};
 
 const VIEWPORT: usize = 256;
 
@@ -140,9 +140,9 @@ fn rasterize(buffer: &mut OverdrawBuffer, mut v1: Vector3, mut v2: Vector3, mut 
 /// Returns overdraw statistics using a software rasterizer.
 ///
 /// Results may not match actual GPU performance.
-pub fn analyze_overdraw<Vertex>(indices: &[u32], vertices: &[Vertex]) -> OverdrawStatistics
+pub fn analyze_overdraw<V>(indices: &[u32], vertices: &[V]) -> OverdrawStatistics
 where
-    Vertex: Position,
+    V: Vertex,
 {
     assert!(indices.len().is_multiple_of(3));
 
@@ -218,9 +218,9 @@ where
     result
 }
 
-fn calculate_sort_data<Vertex>(sort_data: &mut [f32], indices: &[u32], vertices: &[Vertex], clusters: &[u32])
+fn calculate_sort_data<V>(sort_data: &mut [f32], indices: &[u32], vertices: &[V], clusters: &[u32])
 where
-    Vertex: Position,
+    V: Vertex,
 {
     let mut mesh_centroid = [0.0; 3];
 
@@ -511,9 +511,9 @@ fn generate_soft_boundaries(
 /// * `destination`: must contain enough space for the resulting index buffer (`indices.len()` elements)
 /// * `indices`: must contain index data that is the result of [optimize_vertex_cache](crate::vertex::cache::optimize_vertex_cache) (**not** the original mesh indices!)
 /// * `threshold`: indicates how much the overdraw optimizer can degrade vertex cache efficiency (1.05 = up to 5%) to reduce overdraw more efficiently
-pub fn optimize_overdraw<Vertex>(destination: &mut [u32], indices: &[u32], vertices: &[Vertex], threshold: f32)
+pub fn optimize_overdraw<V>(destination: &mut [u32], indices: &[u32], vertices: &[V], threshold: f32)
 where
-    Vertex: Position,
+    V: Vertex,
 {
     assert_eq!(indices.len() % 3, 0);
 
@@ -583,7 +583,7 @@ mod test {
 
     struct DummyVertex;
 
-    impl Position for DummyVertex {
+    impl Vertex for DummyVertex {
         fn pos(&self) -> [f32; 3] {
             [0.0; 3]
         }

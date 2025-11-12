@@ -13,15 +13,14 @@ pub mod index;
 pub mod overdraw;
 pub mod quantize;
 pub mod simplify;
-#[cfg(feature = "experimental")]
 pub mod spatial_order;
 pub mod stripify;
 pub mod util;
 pub mod vertex;
 
-use std::ops::Range;
+use std::ops::{Range, Sub, SubAssign};
 
-use crate::vertex::Position;
+use crate::vertex::Vertex;
 
 pub const INVALID_INDEX: u32 = u32::MAX;
 
@@ -134,8 +133,16 @@ impl Vector3 {
         Self { x, y, z }
     }
 
+    pub fn length_squared(&self) -> f32 {
+        self.x * self.x + self.y * self.y + self.z * self.z
+    }
+
+    pub fn length(&self) -> f32 {
+        self.length_squared().sqrt()
+    }
+
     pub fn normalize(&mut self) -> f32 {
-        let length = (self.x * self.x + self.y * self.y + self.z * self.z).sqrt();
+        let length = self.length();
 
         if length > 0.0 {
             self.x /= length;
@@ -147,7 +154,35 @@ impl Vector3 {
     }
 }
 
-impl Position for Vector3 {
+impl From<[f32; 3]> for Vector3 {
+    fn from(value: [f32; 3]) -> Self {
+        Self {
+            x: value[0],
+            y: value[1],
+            z: value[2],
+        }
+    }
+}
+
+impl SubAssign for Vector3 {
+    fn sub_assign(&mut self, rhs: Self) {
+        *self = *self - rhs;
+    }
+}
+
+impl Sub for Vector3 {
+    type Output = Self;
+
+    fn sub(self, rhs: Self) -> Self::Output {
+        Self {
+            x: self.x - rhs.x,
+            y: self.y - rhs.y,
+            z: self.z - rhs.z,
+        }
+    }
+}
+
+impl Vertex for Vector3 {
     fn pos(&self) -> [f32; 3] {
         [self.x, self.y, self.z]
     }

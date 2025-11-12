@@ -8,15 +8,13 @@ use meshopt_rs::index::*;
 use meshopt_rs::overdraw::*;
 use meshopt_rs::quantize::*;
 use meshopt_rs::simplify::*;
+use meshopt_rs::spatial_order::*;
 use meshopt_rs::stripify::*;
 use meshopt_rs::vertex::buffer::*;
 use meshopt_rs::vertex::cache::*;
 use meshopt_rs::vertex::fetch::*;
 use meshopt_rs::vertex::*;
 use meshopt_rs::{INVALID_INDEX, Stream};
-
-#[cfg(feature = "experimental")]
-use meshopt_rs::spatial_order::*;
 
 use std::env;
 use std::fmt::Debug;
@@ -26,33 +24,43 @@ use std::time::Instant;
 
 #[derive(Clone, Copy, Default, Debug)]
 #[repr(C)]
-struct Vertex {
+struct DemoVertex {
     p: [f32; 3],
     n: [f32; 3],
     t: [f32; 2],
 }
 
-impl Vertex {
+impl DemoVertex {
     fn as_bytes(&self) -> &[u8] {
         unsafe { std::slice::from_raw_parts((self as *const Self) as *const u8, std::mem::size_of::<Self>()) }
     }
 }
 
-impl Hash for Vertex {
+impl Hash for DemoVertex {
     fn hash<H: Hasher>(&self, state: &mut H) {
         state.write(self.as_bytes());
     }
 }
 
-impl PartialEq for Vertex {
+impl PartialEq for DemoVertex {
     fn eq(&self, other: &Self) -> bool {
         self.as_bytes() == other.as_bytes()
     }
 }
 
-impl Eq for Vertex {}
+impl Eq for DemoVertex {}
 
-impl Position for Vertex {
+impl Vertex<3> for DemoVertex {
+    fn pos(&self) -> [f32; 3] {
+        self.p
+    }
+
+    fn attrs(&self) -> [f32; 3] {
+        self.n
+    }
+}
+
+impl Vertex<0> for DemoVertex {
     fn pos(&self) -> [f32; 3] {
         self.p
     }
@@ -60,7 +68,7 @@ impl Position for Vertex {
 
 #[derive(Clone, Default)]
 struct Mesh {
-    vertices: Vec<Vertex>,
+    vertices: Vec<DemoVertex>,
     indices: Vec<u32>,
 }
 
@@ -90,7 +98,7 @@ impl Mesh {
             indices.extend_from_slice(&mesh.indices);
 
             for i in 0..mesh.indices.len() {
-                let mut vertex = Vertex::default();
+                let mut vertex = DemoVertex::default();
 
                 let pi = mesh.indices[i] as usize;
                 let ni = mesh.normal_indices[i] as usize;
@@ -122,7 +130,7 @@ impl Mesh {
 
         result.indices = remap;
 
-        result.vertices.resize(total_vertices, Vertex::default());
+        result.vertices.resize(total_vertices, DemoVertex::default());
         remap_vertex_buffer(&mut result.vertices, &vertices, &result.indices);
 
         let indexed = start.elapsed();
@@ -147,7 +155,7 @@ impl Mesh {
         self.indices.iter().all(|i| (*i as usize) < self.vertices.len())
     }
 
-    fn rotate_triangle(t: &mut [Vertex; 3]) -> bool {
+    fn rotate_triangle(t: &mut [DemoVertex; 3]) -> bool {
         use std::cmp::Ordering;
 
         let c01 = t[0].as_bytes().cmp(t[1].as_bytes());
@@ -202,7 +210,7 @@ impl Mesh {
             // skip degenerate triangles since some algorithms don't preserve them
             if Self::rotate_triangle(&mut v) {
                 let data = unsafe {
-                    std::slice::from_raw_parts(v.as_ptr() as *const u8, std::mem::size_of::<Vertex>() * v.len())
+                    std::slice::from_raw_parts(v.as_ptr() as *const u8, std::mem::size_of::<DemoVertex>() * v.len())
                 };
 
                 let hash = Self::hash_range(data);
@@ -304,7 +312,7 @@ struct PackedVertex {
     t: [u16; 2],
 }
 
-fn pack_mesh(pv: &mut [PackedVertex], vertices: &[Vertex]) {
+fn pack_mesh(pv: &mut [PackedVertex], vertices: &[DemoVertex]) {
     for i in 0..vertices.len() {
         let vi = vertices[i];
         let pvi = &mut pv[i];
@@ -332,7 +340,7 @@ struct PackedVertexOct {
     t: [u16; 2],
 }
 
-fn pack_mesh_oct(pv: &mut [PackedVertexOct], vertices: &[Vertex]) {
+fn pack_mesh_oct(pv: &mut [PackedVertexOct], vertices: &[DemoVertex]) {
     for i in 0..vertices.len() {
         let vi = vertices[i];
         let pvi = &mut pv[i];
@@ -378,7 +386,7 @@ where
     assert_eq!(mesh.hash(), copy.hash());
 
     let vcs = analyze_vertex_cache(&copy.indices, copy.vertices.len(), CACHE_SIZE, 0, 0);
-    let vfs = analyze_vertex_fetch(&copy.indices, copy.vertices.len(), std::mem::size_of::<Vertex>());
+    let vfs = analyze_vertex_fetch(&copy.indices, copy.vertices.len(), std::mem::size_of::<DemoVertex>());
     let os = analyze_overdraw(&copy.indices, &copy.vertices);
 
     let vcs_nv = analyze_vertex_cache(&copy.indices, copy.vertices.len(), 32, 32, 32);
@@ -586,20 +594,59 @@ fn simplify_mesh(mesh: &Mesh) {
     );
     lod.indices.resize(size, 0);
 
-    let size = if lod.indices.len() < mesh.vertices.len() {
-        lod.indices.len()
-    } else {
-        mesh.vertices.len()
-    };
-    lod.vertices.resize(size, Vertex::default()); // note: this is just to reduce the cost of relen()
+    let size = lod.indices.len().min(mesh.vertices.len());
+    lod.vertices.resize(size, DemoVertex::default()); // note: this is just to reduce the cost of resize()
     let size = optimize_vertex_fetch(&mut lod.vertices, &mut lod.indices, &mesh.vertices);
-    lod.vertices.resize(size, Vertex::default());
+    lod.vertices.resize(size, DemoVertex::default());
 
     let duration = start.elapsed();
 
     println!(
         "{:9}: {} triangles => {} triangles  ({:.2}% deviation) in {:.2} msec",
         "Simplify",
+        mesh.indices.len() / 3,
+        lod.indices.len() / 3,
+        result_error * 100.0,
+        duration.as_micros() as f64 / 1000.0
+    );
+}
+
+#[cfg(feature = "experimental")]
+fn simplify_attr(mesh: &Mesh, threshold: f32) {
+    let mut lod = Mesh::default();
+
+    let start = Instant::now();
+
+    let target_index_count = (mesh.indices.len() as f32 * threshold) as usize;
+    let target_error = 1e-2;
+    let mut result_error = 0.0;
+
+    const NRM_WEIGHT: f32 = 0.01;
+    const ATTR_WEIGHTS: [f32; 3] = [NRM_WEIGHT, NRM_WEIGHT, NRM_WEIGHT];
+
+    lod.indices.resize(mesh.indices.len(), 0); // note: simplify needs space for index_count elements in the destination array, not target_index_count
+    let size = simplify_with_attributes::<DemoVertex, 3>(
+        &mut lod.indices,
+        &mesh.indices,
+        &mesh.vertices,
+        &ATTR_WEIGHTS,
+        target_index_count,
+        target_error,
+        SimplificationOptions::empty(),
+        Some(&mut result_error),
+    );
+    lod.indices.truncate(size);
+
+    let size = lod.indices.len().min(mesh.vertices.len());
+    lod.vertices.resize(size, DemoVertex::default()); // note: this is just to reduce the cost of resize()
+    let size = optimize_vertex_fetch(&mut lod.vertices, &mut lod.indices, &mesh.vertices);
+    lod.vertices.truncate(size);
+
+    let duration = start.elapsed();
+
+    println!(
+        "{:9}: {} triangles => {} triangles ({:.2}% deviation) in {:.2} msec",
+        "SimplifyAttr",
         mesh.indices.len() / 3,
         lod.indices.len() / 3,
         result_error * 100.0,
@@ -658,7 +705,7 @@ fn simplify_mesh_points(mesh: &Mesh, threshold: f32) {
     let target_vertex_count = (mesh.vertices.len() as f32 * threshold) as usize;
 
     let mut indices = vec![0; target_vertex_count];
-    let size = simplify_points(&mut indices, &mesh.vertices, target_vertex_count);
+    let size = simplify_points(&mut indices, &mesh.vertices, target_vertex_count, 0.0);
     indices.resize(size, Default::default());
 
     let duration = start.elapsed();
@@ -782,7 +829,7 @@ fn simplify_mesh_complete(mesh: &Mesh) {
         let vfs_0 = analyze_vertex_fetch(
             &indices[offset0..offset0 + lod_index_counts[0]],
             vertices.len(),
-            std::mem::size_of::<Vertex>(),
+            std::mem::size_of::<DemoVertex>(),
         );
         let offsetn = lod_index_offsets[LOD_COUNT - 1];
         let vcs_n = analyze_vertex_cache(
@@ -795,7 +842,7 @@ fn simplify_mesh_complete(mesh: &Mesh) {
         let vfs_n = analyze_vertex_fetch(
             &indices[offsetn..offsetn + lod_index_counts[LOD_COUNT - 1]],
             vertices.len(),
-            std::mem::size_of::<Vertex>(),
+            std::mem::size_of::<DemoVertex>(),
         );
 
         let mut pv = vec![PackedVertexOct::default(); vertices.len()];
@@ -1057,7 +1104,6 @@ fn meshlets(mesh: &Mesh, scan: bool) {
     );
 }
 
-#[cfg(feature = "experimental")]
 fn spatial_sort_mesh(mesh: &Mesh) {
     let mut pv = vec![PackedVertexOct::default(); mesh.vertices.len()];
     pack_mesh_oct(&mut pv, &mesh.vertices);
@@ -1308,17 +1354,21 @@ fn process(mesh: &Mesh) {
 
     #[cfg(feature = "experimental")]
     {
+        simplify_attr(mesh, 0.2);
         simplify_mesh_sloppy(mesh, 0.2);
         simplify_mesh_complete(mesh);
         simplify_mesh_points(mesh, 0.2);
-
-        spatial_sort_mesh(mesh);
-        spatial_sort_mesh_triangles(mesh);
     }
+
+    spatial_sort_mesh(mesh);
+
+    #[cfg(feature = "experimental")]
+    spatial_sort_mesh_triangles(mesh);
 }
 
-fn process_dev(mesh: &Mesh) {
-    meshlets(mesh, false);
+fn process_dev(#[allow(unused)] mesh: &Mesh) {
+    #[cfg(feature = "experimental")]
+    simplify_attr(mesh, 0.2);
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {

@@ -10,7 +10,7 @@ use meshopt_rs::index::generator::{
 use meshopt_rs::index::sequence::{decode_index_sequence, encode_index_sequence, encode_index_sequence_bound};
 use meshopt_rs::overdraw::optimize_overdraw;
 use meshopt_rs::stripify::{stripify, stripify_bound};
-use meshopt_rs::vertex::Position;
+use meshopt_rs::vertex::Vertex;
 use meshopt_rs::vertex::cache::{optimize_vertex_cache, optimize_vertex_cache_fifo, optimize_vertex_cache_strip};
 use meshopt_rs::vertex::fetch::{optimize_vertex_fetch, optimize_vertex_fetch_remap};
 
@@ -19,13 +19,13 @@ use std::path::Path;
 
 #[derive(Clone, Copy, Default)]
 #[repr(C)]
-struct Vertex {
+struct BenchVertex {
     p: [f32; 3],
     n: [f32; 3],
     t: [f32; 2],
 }
 
-impl Position for Vertex {
+impl Vertex for BenchVertex {
     fn pos(&self) -> [f32; 3] {
         self.p
     }
@@ -33,7 +33,7 @@ impl Position for Vertex {
 
 #[derive(Clone, Default)]
 struct Mesh {
-    vertices: Vec<Vertex>,
+    vertices: Vec<BenchVertex>,
     indices: Vec<u32>,
 }
 
@@ -61,7 +61,7 @@ impl Mesh {
             indices.extend_from_slice(&mesh.indices);
 
             for i in 0..mesh.indices.len() {
-                let mut vertex = Vertex::default();
+                let mut vertex = BenchVertex::default();
 
                 let pi = mesh.indices[i] as usize;
                 vertex.p.copy_from_slice(&mesh.positions[3 * pi..3 * (pi + 1)]);
@@ -89,7 +89,7 @@ impl Mesh {
 
         result.indices = remap;
 
-        result.vertices.resize(total_vertices, Vertex::default());
+        result.vertices.truncate(total_vertices);
         remap_vertex_buffer(&mut result.vertices, &vertices, &result.indices);
 
         Ok(result)

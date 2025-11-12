@@ -27,20 +27,30 @@ impl From<VertexEncodingVersion> for u8 {
     }
 }
 
-pub trait Position {
+pub trait Vertex<const ATTR_COUNT: usize = 0> {
+    const HAS_COLORS: bool = false;
+
     fn pos(&self) -> [f32; 3];
+
+    fn attrs(&self) -> [f32; ATTR_COUNT] {
+        [0f32; ATTR_COUNT]
+    }
+
+    fn colors(&self) -> [f32; 3] {
+        [0f32; 3]
+    }
 }
 
-impl Position for [f32; 3] {
+impl Vertex for [f32; 3] {
     #[inline]
     fn pos(&self) -> [f32; 3] {
         *self
     }
 }
 
-pub(crate) fn calc_pos_extents<Vertex>(vertices: &[Vertex]) -> ([f32; 3], f32)
+pub(crate) fn calc_pos_extents<V, const ATTR_COUNT: usize>(vertices: &[V]) -> ([f32; 3], f32)
 where
-    Vertex: Position,
+    V: Vertex<ATTR_COUNT>,
 {
     let mut minv = [f32::MAX; 3];
     let mut maxv = [-f32::MAX; 3];

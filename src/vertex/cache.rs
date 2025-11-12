@@ -251,8 +251,8 @@ fn optimize_vertex_cache_table(
             .sum();
     }
 
-    let mut cache_holder = [0; 2 * (CACHE_SIZE_MAX + 3)];
-    let (mut cache, mut cache_new) = cache_holder.split_at_mut(CACHE_SIZE_MAX + 3);
+    let mut cache_holder = [0; 2 * (CACHE_SIZE_MAX + 4)];
+    let (mut cache, mut cache_new) = cache_holder.split_at_mut(CACHE_SIZE_MAX + 4);
     let mut cache_count = 0;
 
     let mut current_triangle = 0;
@@ -283,10 +283,8 @@ fn optimize_vertex_cache_table(
 
         // old triangles
         for index in &cache[0..cache_count] {
-            if abc.iter().all(|e| *e != *index) {
-                cache_new[cache_write] = *index;
-                cache_write += 1;
-            }
+            cache_new[cache_write] = *index;
+            cache_write += abc.iter().all(|e| *e != *index) as usize;
         }
 
         std::mem::swap(&mut cache, &mut cache_new);
@@ -317,10 +315,15 @@ fn optimize_vertex_cache_table(
         }
 
         let mut best_triangle = INVALID_INDEX;
-        let mut best_score = 0.0;
+        let mut best_score = 0.0f32;
 
         // update cache positions, vertex scores and triangle scores, and find next best triangle
         for (i, index) in cache.iter().map(|index| *index as usize).enumerate().take(cache_write) {
+            // no need to update scores if we are never going to use this vertex
+            if adjacency.counts[index] == 0 {
+                continue;
+            }
+
             let cache_position = if i >= cache_size { -1 } else { i as i32 };
 
             // update vertex score
@@ -341,8 +344,8 @@ fn optimize_vertex_cache_table(
 
                 if best_score < tri_score {
                     best_triangle = *tri;
-                    best_score = tri_score;
                 }
+                best_score = best_score.max(tri_score);
 
                 triangle_scores[*tri as usize] = tri_score;
             }

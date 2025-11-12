@@ -2,7 +2,7 @@
 
 use meshopt_rs::index::IndexEncodingVersion;
 use meshopt_rs::index::buffer::{decode_index_buffer, encode_index_buffer, encode_index_buffer_bound};
-use meshopt_rs::vertex::Position;
+use meshopt_rs::vertex::Vertex;
 use meshopt_rs::vertex::VertexEncodingVersion;
 use meshopt_rs::vertex::buffer::{decode_vertex_buffer, encode_vertex_buffer, encode_vertex_buffer_bound};
 use meshopt_rs::vertex::cache::{optimize_vertex_cache, optimize_vertex_cache_strip};
@@ -12,11 +12,11 @@ use std::time::Instant;
 
 #[derive(Clone, Copy, Default)]
 #[repr(C)]
-struct Vertex {
+struct BenchVertex {
     data: [u16; 16],
 }
 
-impl Position for Vertex {
+impl Vertex for BenchVertex {
     fn pos(&self) -> [f32; 3] {
         let get_f32 = |start: usize| {
             let a = self.data[start].to_le_bytes();
@@ -38,11 +38,11 @@ fn murmur3(mut h: u32) -> u32 {
     h
 }
 
-fn bench_codecs(vertices: &[Vertex], indices: &[u32], bestvd: &mut f64, bestid: &mut f64, verbose: bool) {
-    let mut vb = vec![Vertex::default(); vertices.len()];
+fn bench_codecs(vertices: &[BenchVertex], indices: &[u32], bestvd: &mut f64, bestid: &mut f64, verbose: bool) {
+    let mut vb = vec![BenchVertex::default(); vertices.len()];
     let mut ib = vec![0u32; indices.len()];
 
-    let mut vc = vec![0u8; encode_vertex_buffer_bound(vertices.len(), std::mem::size_of::<Vertex>())];
+    let mut vc = vec![0u8; encode_vertex_buffer_bound(vertices.len(), std::mem::size_of::<BenchVertex>())];
     let mut ic = vec![0u8; encode_index_buffer_bound(indices.len(), vertices.len())];
 
     if verbose {
@@ -203,7 +203,7 @@ fn main() {
 
     for x in 0..=N {
         for y in 0..=N {
-            let mut v = Vertex::default();
+            let mut v = BenchVertex::default();
 
             for k in 0..16 {
                 let h = murmur3((x * (N + 1) + y) * 16 + k);

@@ -2,7 +2,7 @@
 
 use crate::INVALID_INDEX;
 
-use super::Position;
+use super::Vertex;
 
 #[derive(Default)]
 pub struct VertexFetchStatistics {
@@ -102,9 +102,9 @@ pub fn optimize_vertex_fetch_remap(destination: &mut [u32], indices: &[u32]) -> 
 /// # Arguments
 ///
 /// * `destination`: must contain enough space for the resulting vertex buffer (`vertices.len()` elements)
-pub fn optimize_vertex_fetch<Vertex>(destination: &mut [Vertex], indices: &mut [u32], vertices: &[Vertex]) -> usize
+pub fn optimize_vertex_fetch<V>(destination: &mut [V], indices: &mut [u32], vertices: &[V]) -> usize
 where
-    Vertex: Position + Copy,
+    V: Vertex + Copy,
 {
     assert!(indices.len().is_multiple_of(3));
 
