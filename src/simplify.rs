@@ -14,7 +14,6 @@ use crate::INVALID_INDEX;
 use crate::Vector3;
 use crate::hash::BuildNoopHasher;
 use crate::util::zero_inverse;
-#[cfg(feature = "experimental")]
 use crate::vertex::{Vertex, calc_pos_extents};
 
 use std::collections::{HashMap, hash_map::Entry};
@@ -722,6 +721,7 @@ impl AddAssign for QuadricGrad {
     }
 }
 
+#[cfg(feature = "experimental")]
 #[derive(Default, Debug, Clone, Copy)]
 struct Reservoir {
     x: f32,
@@ -1549,7 +1549,7 @@ pub fn simplify<V>(
 where
     V: Vertex,
 {
-    simplify_with_attributes::<V, 0>(
+    simplify_edge::<V, 0>(
         destination,
         indices,
         vertices,
@@ -2488,6 +2488,7 @@ mod test {
     }
 
     #[test]
+    #[cfg(feature = "experimental")]
     fn test_simplify_attr() {
         #[derive(Default, Clone, Copy)]
         struct TestVertexWithAttributes([[f32; 3]; 2]);

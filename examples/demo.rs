@@ -1366,7 +1366,8 @@ fn process(mesh: &Mesh) {
     spatial_sort_mesh_triangles(mesh);
 }
 
-fn process_dev(mesh: &Mesh) {
+fn process_dev(#[allow(unused)] mesh: &Mesh) {
+    #[cfg(feature = "experimental")]
     simplify_attr(mesh, 0.2);
 }
 
