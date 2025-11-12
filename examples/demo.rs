@@ -1366,9 +1366,12 @@ fn process(mesh: &Mesh) {
     spatial_sort_mesh_triangles(mesh);
 }
 
-fn process_dev(#[allow(unused)] mesh: &Mesh) {
-    #[cfg(feature = "experimental")]
-    simplify_attr(mesh, 0.2);
+fn process_dev(mesh: &Mesh) {
+    let mut copy = mesh.clone();
+    optimize_vertex_cache(&mut copy.indices, &mesh.indices, mesh.vertices.len());
+    optimize_vertex_fetch(&mut copy.vertices, &mut copy.indices, &mesh.vertices);
+
+    meshlets(&copy, false);
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
