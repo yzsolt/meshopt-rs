@@ -289,7 +289,7 @@ fn optimize_vertex_cache_table(
 
         // remove emitted triangle from adjacency data
         // this makes sure that we spend less time traversing these lists on subsequent iterations
-        // live triangle counts are updated as a byproduct of these adjustments
+        // live triangle counts (=adjacency.counts) are updated as a byproduct of these adjustments
         for index in abc {
             let index = *index as usize;
 
