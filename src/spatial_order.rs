@@ -1,5 +1,6 @@
-//! **Experimental** spatial sorting
+//! Spatial sorting
 
+#[cfg(feature = "experimental")]
 use crate::Vector3;
 use crate::util::zero_inverse;
 use crate::vertex::{Vertex, calc_pos_extents};
@@ -114,6 +115,7 @@ where
 /// # Arguments
 ///
 /// * `destination`: must contain enough space for the resulting index buffer (`indices.len()` elements)
+#[cfg(feature = "experimental")]
 pub fn spatial_sort_triangles<V>(destination: &mut [u32], indices: &[u32], vertices: &[V])
 where
     V: Vertex,

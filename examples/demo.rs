@@ -8,15 +8,13 @@ use meshopt_rs::index::*;
 use meshopt_rs::overdraw::*;
 use meshopt_rs::quantize::*;
 use meshopt_rs::simplify::*;
+use meshopt_rs::spatial_order::*;
 use meshopt_rs::stripify::*;
 use meshopt_rs::vertex::buffer::*;
 use meshopt_rs::vertex::cache::*;
 use meshopt_rs::vertex::fetch::*;
 use meshopt_rs::vertex::*;
 use meshopt_rs::{INVALID_INDEX, Stream};
-
-#[cfg(feature = "experimental")]
-use meshopt_rs::spatial_order::*;
 
 use std::env;
 use std::fmt::Debug;
@@ -1106,7 +1104,6 @@ fn meshlets(mesh: &Mesh, scan: bool) {
     );
 }
 
-#[cfg(feature = "experimental")]
 fn spatial_sort_mesh(mesh: &Mesh) {
     let mut pv = vec![PackedVertexOct::default(); mesh.vertices.len()];
     pack_mesh_oct(&mut pv, &mesh.vertices);
@@ -1361,10 +1358,12 @@ fn process(mesh: &Mesh) {
         simplify_mesh_sloppy(mesh, 0.2);
         simplify_mesh_complete(mesh);
         simplify_mesh_points(mesh, 0.2);
-
-        spatial_sort_mesh(mesh);
-        spatial_sort_mesh_triangles(mesh);
     }
+
+    spatial_sort_mesh(mesh);
+
+    #[cfg(feature = "experimental")]
+    spatial_sort_mesh_triangles(mesh);
 }
 
 fn process_dev(mesh: &Mesh) {

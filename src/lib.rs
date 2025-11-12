@@ -13,7 +13,6 @@ pub mod index;
 pub mod overdraw;
 pub mod quantize;
 pub mod simplify;
-#[cfg(feature = "experimental")]
 pub mod spatial_order;
 pub mod stripify;
 pub mod util;
