@@ -1815,7 +1815,8 @@ where
 
     #[cfg(feature = "trace")]
     println!(
-        "result: {result_count} triangles, error: {:e}; total {pass_count} passes",
+        "result: {} triangles, error: {:e}; total {pass_count} passes",
+        result_count / 3,
         result_error_max.sqrt()
     );
 
