@@ -979,6 +979,15 @@ fn meshlets(mesh: &Mesh, scan: bool) {
 
     meshlets.truncate(size);
 
+    for meshlet in &meshlets {
+        optimize_meshlet(
+            &mut meshlet_vertices
+                [meshlet.vertex_offset as usize..(meshlet.vertex_offset + meshlet.vertex_count) as usize],
+            &mut meshlet_triangles
+                [meshlet.triangle_offset as usize..(meshlet.triangle_offset + meshlet.triangle_count * 3) as usize],
+        );
+    }
+
     if !meshlets.is_empty() {
         let last = meshlets.last().unwrap();
 
