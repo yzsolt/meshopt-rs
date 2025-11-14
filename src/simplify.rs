@@ -1579,7 +1579,7 @@ where
 ///
 /// * `vertex_attributes`: should have attribute_count floats for each vertex
 /// * `attribute_weights`: should have attribute_count floats in total; the weights determine relative priority of attributes between each other and wrt position. The recommended weight range is [1e-3..1e-1], assuming attribute data is in [0..1] range.
-/// * `vertex_lock`: when `Some`, it defines for each vertex if they are locked (`true`) or free to be simplified (`false`).
+/// * `vertex_lock`: when `Some`, it defines for each vertex if they can't be moved (`true`) or free to be simplified (`false`).
 ///
 /// TODO `target_error`/`result_error` currently use combined distance+attribute error; this may change in the future
 #[cfg(feature = "experimental")]
