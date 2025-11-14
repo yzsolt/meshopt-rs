@@ -1377,11 +1377,7 @@ fn process(mesh: &Mesh) {
 }
 
 fn process_dev(mesh: &Mesh) {
-    let mut copy = mesh.clone();
-    optimize_vertex_cache(&mut copy.indices, &mesh.indices, mesh.vertices.len());
-    optimize_vertex_fetch(&mut copy.vertices, &mut copy.indices, &mesh.vertices);
-
-    meshlets(&copy, false);
+    simplify_mesh(mesh);
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
