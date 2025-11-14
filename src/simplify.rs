@@ -2580,4 +2580,71 @@ mod test {
         );
         assert!(actual.iter().zip(expected.iter().flatten()).all(|(a, b)| a == b));
     }
+
+    #[test]
+    fn test_simplify_lock_flags() {
+        #[rustfmt::skip]
+        let vb = vb_from_slice(&[
+            0.000000, 0.000000, 0.000000,
+            0.000000, 1.000000, 0.000000,
+            0.000000, 2.000000, 0.000000,
+            1.000000, 0.000000, 0.000000,
+            1.000000, 1.000000, 0.000000,
+            1.000000, 2.000000, 0.000000,
+            2.000000, 0.000000, 0.000000,
+            2.000000, 1.000000, 0.000000,
+            2.000000, 2.000000, 0.000000,
+        ]);
+
+        #[rustfmt::skip]
+        let lock = [
+            true, true, true,
+            true, false, true,
+            true, true, true,
+        ];
+
+        // 0 1 2
+        // 3 4 5
+        // 6 7 8
+
+        #[rustfmt::skip]
+        let ib = [
+            0, 1, 3,
+            3, 1, 4,
+            1, 2, 4,
+            4, 2, 5,
+            3, 4, 6,
+            6, 4, 7,
+            4, 5, 7,
+            7, 5, 8,
+        ];
+
+        #[rustfmt::skip]
+        let expected = [
+            0, 1, 3,
+            1, 2, 3,
+            3, 2, 5,
+            6, 3, 7,
+            3, 5, 7,
+            7, 5, 8,
+        ];
+
+        let mut actual = vec![0u32; ib.len()];
+
+        assert_eq!(
+            simplify_with_attributes::<_, 0>(
+                &mut actual,
+                &ib,
+                &vb,
+                &[],
+                Some(&lock),
+                3,
+                1e-3,
+                SimplificationOptions::empty(),
+                None
+            ),
+            18
+        );
+        assert_eq!(&actual[0..expected.len()], expected);
+    }
 }
