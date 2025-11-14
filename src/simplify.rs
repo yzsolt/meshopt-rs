@@ -239,6 +239,7 @@ fn classify_vertices(
     adjacency: &EdgeAdjacency,
     remap: &[u32],
     wedge: &[u32],
+    vertex_lock: Option<&[bool]>,
     options: SimplificationOptions,
 ) {
     // incoming & outgoing open edges: `INVALID_INDEX` if no open edges, i if there are more than 1
@@ -284,7 +285,12 @@ fn classify_vertices(
 
     for i in 0..vertex_count {
         if remap[i] == i as u32 {
-            if wedge[i] == i as u32 {
+            if let Some(vertex_lock) = vertex_lock
+                && vertex_lock[i]
+            {
+                // vertex is explicitly locked
+                result[i] = VertexKind::Locked;
+            } else if wedge[i] == i as u32 {
                 // no attribute seam, need to check if it's manifold
                 let openi = openinc[i];
                 let openo = openout[i];
@@ -1556,6 +1562,7 @@ where
         indices,
         vertices,
         &[],
+        None,
         target_index_count,
         target_error,
         options,
@@ -1572,6 +1579,7 @@ where
 ///
 /// * `vertex_attributes`: should have attribute_count floats for each vertex
 /// * `attribute_weights`: should have attribute_count floats in total; the weights determine relative priority of attributes between each other and wrt position. The recommended weight range is [1e-3..1e-1], assuming attribute data is in [0..1] range.
+/// * `vertex_lock`: when `Some`, it defines for each vertex if they are locked (`true`) or free to be simplified (`false`).
 ///
 /// TODO `target_error`/`result_error` currently use combined distance+attribute error; this may change in the future
 #[cfg(feature = "experimental")]
@@ -1581,6 +1589,7 @@ pub fn simplify_with_attributes<V, const ATTR_COUNT: usize>(
     indices: &[u32],
     vertices: &[V],
     attribute_weights: &[f32; ATTR_COUNT],
+    vertex_lock: Option<&[bool]>,
     target_index_count: usize,
     target_error: f32,
     options: SimplificationOptions,
@@ -1594,6 +1603,7 @@ where
         indices,
         vertices,
         attribute_weights,
+        vertex_lock,
         target_index_count,
         target_error,
         options,
@@ -1607,6 +1617,7 @@ fn simplify_edge<V, const ATTR_COUNT: usize>(
     indices: &[u32],
     vertices: &[V],
     attribute_weights: &[f32; ATTR_COUNT],
+    vertex_lock: Option<&[bool]>,
     target_index_count: usize,
     target_error: f32,
     options: SimplificationOptions,
@@ -1646,6 +1657,7 @@ where
         &adjacency,
         &remap,
         &wedge,
+        vertex_lock,
         options,
     );
 
@@ -2558,6 +2570,7 @@ mod test {
                 &ib,
                 &vb,
                 &attr_weights,
+                None,
                 6 * 3,
                 1e-2,
                 SimplificationOptions::empty(),

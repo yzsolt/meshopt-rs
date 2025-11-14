@@ -630,6 +630,7 @@ fn simplify_attr(mesh: &Mesh, threshold: f32) {
         &mesh.indices,
         &mesh.vertices,
         &ATTR_WEIGHTS,
+        None,
         target_index_count,
         target_error,
         SimplificationOptions::empty(),
