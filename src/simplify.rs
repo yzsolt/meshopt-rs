@@ -658,20 +658,25 @@ impl Quadric {
         let p10 = *p1 - *p0;
         let p20 = *p2 - *p0;
 
-        // weight is scaled linearly with edge length
+        // normal = cross(p1 - p0, p2 - p0)
         let normal = Vector3 {
             x: p10.y * p20.z - p10.z * p20.y,
             y: p10.z * p20.x - p10.x * p20.z,
             z: p10.x * p20.y - p10.y * p20.x,
         };
-        let area = normal.length();
-        let w = area.sqrt(); // TODO this needs more experimentation
+        let area = normal.length() * 0.5;
+
+        // quadric is weighted with the square of edge length (= area)
+        // this equalizes the units with the positional error (which, after normalization, is a square of distance)
+        // as a result, a change in weighted attribute of 1 along distance d is approximately equivalent to a change in position of d
+        let w = area;
 
         // we compute gradients using barycentric coordinates; barycentric coordinates can be computed as follows:
         // v = (d11 * d20 - d01 * d21) / denom
         // w = (d00 * d21 - d01 * d20) / denom
         // u = 1 - v - w
         // here v0, v1 are triangle edge vectors, v2 is a vector from point to triangle corner, and dij = dot(vi, vj)
+        // note: v2 and d20/d21 can not be evaluated here as v2 is effectively an unknown variable; we need these only as variables for derivation of gradients
         let v0 = &p10;
         let v1 = &p20;
         let d00 = v0.length_squared();
@@ -681,7 +686,7 @@ impl Quadric {
         let denomr = zero_inverse(denom);
 
         // precompute gradient factors
-        // these are derived by directly computing derivative of eval(pos) = a0 * u + a1 * v + a2 * w and factoring out common factors that are shared between attributes
+        // these are derived by directly computing derivative of eval(pos) = a0 * u + a1 * v + a2 * w and factoring out expressions that are shared between attributes
         let gx1 = (d11 * v0.x - d01 * v1.x) * denomr;
         let gx2 = (d00 * v1.x - d01 * v0.x) * denomr;
         let gy1 = (d11 * v0.y - d01 * v1.y) * denomr;
@@ -708,6 +713,7 @@ impl Quadric {
 
             // quadric encodes (eval(pos)-attr)^2; this means that the resulting expansion needs to compute, for example, pos.x * pos.y * K
             // since quadrics already encode factors for pos.x * pos.y, we can accumulate almost everything in basic quadric fields
+            // note: for simplicity we scale all factors by weight here instead of outside the loop
             q.a00 += w * (gx * gx);
             q.a11 += w * (gy * gy);
             q.a22 += w * (gz * gz);
@@ -732,7 +738,7 @@ impl Quadric {
         q
     }
 
-    pub fn error(&self, v: &Vector3) -> f32 {
+    pub fn eval(&self, v: &Vector3) -> f32 {
         let mut rx = self.b0;
         let mut ry = self.b1;
         let mut rz = self.b2;
@@ -754,6 +760,11 @@ impl Quadric {
         r += ry * v.y;
         r += rz * v.z;
 
+        r
+    }
+
+    pub fn error(&self, v: &Vector3) -> f32 {
+        let r = self.eval(v);
         let s = zero_inverse(self.w);
 
         r.abs() * s
@@ -765,39 +776,17 @@ impl Quadric {
         v: &Vector3,
         va: &[f32; ATTR_COUNT],
     ) -> f32 {
-        let mut rx = self.b0;
-        let mut ry = self.b1;
-        let mut rz = self.b2;
+        let mut r = self.eval(v);
 
-        rx += self.a10 * v.y;
-        ry += self.a21 * v.z;
-        rz += self.a20 * v.x;
-
-        rx *= 2.0;
-        ry *= 2.0;
-        rz *= 2.0;
-
-        rx += self.a00 * v.x;
-        ry += self.a11 * v.y;
-        rz += self.a22 * v.z;
-
-        let mut r = self.c;
-        r += rx * v.x;
-        r += ry * v.y;
-        r += rz * v.z;
-
-        // see quadricFromAttributes for general derivation; here we need to add the parts of (eval(pos) - attr)^2 that depend on attr
+        // see [Quadric::from_attributes] for general derivation; here we need to add the parts of (eval(pos) - attr)^2 that depend on attr
         for (a, gg) in va.iter().zip(g.iter()) {
             let g = v.x * gg.gx + v.y * gg.gy + v.z * gg.gz + gg.gw;
 
-            r += a * a * self.w;
-            r -= 2.0 * a * g;
+            r += a * (a * self.w - 2.0 * g);
         }
 
-        // TODO: weight normalization is breaking attribute error somehow
-        let s = 1.0; // q.w == zero_inverse(q.w);
-
-        r.abs() * s
+        // note: unlike position error, we do not normalize by self.w to retain edge scaling as described in [Quadric::from_attributes]
+        r.abs()
     }
 }
 
@@ -1685,8 +1674,6 @@ where
 /// * `vertex_attributes`: should have attribute_count floats for each vertex
 /// * `attribute_weights`: should have attribute_count floats in total; the weights determine relative priority of attributes between each other and wrt position. The recommended weight range is [1e-3..1e-1], assuming attribute data is in [0..1] range.
 /// * `vertex_lock`: when `Some`, it defines for each vertex if they can't be moved (`true`) or free to be simplified (`false`).
-///
-/// TODO `target_error`/`result_error` currently use combined distance+attribute error; this may change in the future
 #[cfg(feature = "experimental")]
 #[allow(clippy::too_many_arguments)]
 pub fn simplify_with_attributes<V, const ATTR_COUNT: usize>(
@@ -2821,7 +2808,7 @@ mod test {
             100.0
         ].iter()).map(|(p, a)| TestVertexWithAttributes((p.pos(), *a))).collect();
 
-        let aw = [0.2];
+        let aw = [0.5];
 
         #[rustfmt::skip]
         let lock = [

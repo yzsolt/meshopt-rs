@@ -621,7 +621,7 @@ fn simplify_attr(mesh: &Mesh, threshold: f32) {
     let target_error = 1e-2;
     let mut result_error = 0.0;
 
-    const NRM_WEIGHT: f32 = 0.01;
+    const NRM_WEIGHT: f32 = 0.5;
     const ATTR_WEIGHTS: [f32; 3] = [NRM_WEIGHT, NRM_WEIGHT, NRM_WEIGHT];
 
     lod.indices.resize(mesh.indices.len(), 0); // note: simplify needs space for index_count elements in the destination array, not target_index_count
@@ -1466,7 +1466,8 @@ fn process(mesh: &Mesh) {
     spatial_sort_mesh_triangles(mesh);
 }
 
-fn process_dev(mesh: &Mesh) {
+fn process_dev(#[allow(unused)] mesh: &Mesh) {
+    #[cfg(feature = "experimental")]
     simplify_attr(mesh, 0.2);
 }
 
