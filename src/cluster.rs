@@ -852,7 +852,8 @@ where
 ///
 /// # Arguments
 ///
-/// * `indices`: should be smaller than or equal to 256*3 (the function assumes clusters of limited size)
+/// * `indices`: `indices.len() / 3` must not exceed implementation limits (<= 512)
+/// * `vertices`: should specify all vertices in the entire mesh, not cluster or meshlet
 pub fn compute_cluster_bounds<V>(indices: &[u32], vertices: &[V]) -> Bounds
 where
     V: Vertex,
