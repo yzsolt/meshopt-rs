@@ -1649,7 +1649,7 @@ bitflags! {
 /// Reduces the number of triangles in the mesh, attempting to preserve mesh appearance as much as possible.
 ///
 /// The algorithm tries to preserve mesh topology and can stop short of the target goal based on topology constraints or target error.
-/// If not all attributes from the input mesh are required, it's recommended to reindex the mesh using [generate_shadow_index_buffer](crate::index::generator::generate_shadow_index_buffer) prior to simplification.
+/// If not all attributes from the input mesh are required, it's recommended to reindex the mesh without them prior to simplification.
 ///
 /// Returns the number of indices after simplification, with destination containing new index data.
 /// The resulting index buffer references vertices from the original vertex buffer.
