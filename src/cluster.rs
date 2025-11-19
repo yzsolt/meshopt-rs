@@ -38,6 +38,11 @@ pub struct Bounds {
     pub cone_cutoff_s8: i8,
 }
 
+/// Meshlet is a small mesh cluster (subset) that consists of:
+/// - triangles, an 8-bit micro triangle (index) buffer, that for each triangle specifies three local vertices to use;
+/// - vertices, a 32-bit vertex indirection buffer, that for each local vertex specifies which mesh vertex to fetch vertex attributes from.
+///
+/// For efficiency, meshlet triangles and vertices are packed into two large arrays; this structure contains offsets and counts to access the data.
 #[derive(Clone, Default)]
 pub struct Meshlet {
     /* offsets within meshlet_vertices and meshlet_triangles arrays with meshlet data */
@@ -495,6 +500,7 @@ pub fn build_meshlets_bound(index_count: usize, max_vertices: usize, max_triangl
 ///
 /// The resulting data can be used to render meshes using NVidia programmable mesh shading pipeline, or in other cluster-based renderers.
 /// For maximum efficiency the index buffer being converted has to be optimized for vertex cache first.
+/// When targeting mesh shading hardware, for maximum efficiency meshlets should be further optimized using [optimize_meshlet].
 ///
 /// # Arguments
 ///
@@ -633,6 +639,7 @@ fn get_neighbor_triangle(
 ///
 /// The resulting data can be used to render meshes using NVidia programmable mesh shading pipeline, or in other cluster-based renderers.
 /// For maximum efficiency the index buffer being converted has to be optimized for vertex cache first.
+/// When targeting mesh shading hardware, for maximum efficiency meshlets should be further optimized using [optimize_meshlet].
 ///
 /// # Arguments
 ///
