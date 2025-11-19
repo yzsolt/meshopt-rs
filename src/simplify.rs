@@ -966,7 +966,13 @@ fn has_triangle_flip(a: &Vector3, b: &Vector3, c: &Vector3, d: &Vector3) -> bool
         eb.x * ed.y - eb.y * ed.x,
     );
 
-    nbc.x * nbd.x + nbc.y * nbd.y + nbc.z * nbd.z <= 0.0
+    let ndp = nbc.x * nbd.x + nbc.y * nbd.y + nbc.z * nbd.z;
+    let abc = nbc.x * nbc.x + nbc.y * nbc.y + nbc.z * nbc.z;
+    let abd = nbd.x * nbd.x + nbd.y * nbd.y + nbd.z * nbd.z;
+
+    // scale is cos(angle); somewhat arbitrarily set to ~75 degrees
+    // note that the "pure" check is ndp <= 0 (90 degree cutoff) but that allows flipping through a series of close-to-90 collapses
+    ndp <= 0.25 * (abc * abd).sqrt()
 }
 
 fn has_triangle_flips(
