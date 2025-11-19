@@ -149,7 +149,7 @@ where
 
     let mut result = OverdrawStatistics::default();
 
-    let (minv, extent) = calc_pos_extents(vertices);
+    let (minv, extent) = calc_pos_extents(vertices.iter().map(|v| v.pos()));
 
     let scale = VIEWPORT as f32 / extent;
 

@@ -20,7 +20,7 @@ fn compute_order<V>(result: &mut [u32], vertices: &[V])
 where
     V: Vertex,
 {
-    let (minv, extent) = calc_pos_extents(vertices);
+    let (minv, extent) = calc_pos_extents(vertices.iter().map(|v| v.pos()));
 
     let scale = zero_inverse(extent);
 

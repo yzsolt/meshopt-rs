@@ -704,6 +704,9 @@ fn simplify_mesh_points(mesh: &Mesh, threshold: f32) {
     let start = Instant::now();
 
     let target_vertex_count = (mesh.vertices.len() as f32 * threshold) as usize;
+    if target_vertex_count == 0 {
+        return;
+    }
 
     let mut indices = vec![0; target_vertex_count];
     let size = simplify_points(&mut indices, &mesh.vertices, target_vertex_count, 0.0);
@@ -868,6 +871,90 @@ fn simplify_mesh_complete(mesh: &Mesh) {
             ibuf.len() as f64 / (indices.len() / 3) as f64 * 8.0
         );
     }
+}
+
+fn simplify_mesh_clusters(mesh: &Mesh, threshold: f32) {
+    // note: we use clusters that are larger than normal to give simplifier room to work; in practice you'd use cluster groups merged from smaller clusters and build a cluster DAG
+    const MAX_VERTICES: usize = 255;
+    const MAX_TRIANGLES: usize = 512;
+
+    let start = Instant::now();
+
+    let max_meshlets = build_meshlets_bound(mesh.indices.len(), MAX_VERTICES, MAX_TRIANGLES);
+    let mut meshlets = vec![Meshlet::default(); max_meshlets];
+    let mut meshlet_vertices = vec![0u32; max_meshlets * MAX_VERTICES];
+    let mut meshlet_triangles = vec![0u8; max_meshlets * MAX_TRIANGLES * 3];
+
+    let size = build_meshlets(
+        &mut meshlets,
+        &mut meshlet_vertices,
+        &mut meshlet_triangles,
+        &mesh.indices,
+        &mesh.vertices,
+        MAX_VERTICES,
+        MAX_TRIANGLES,
+        0.0,
+    );
+    meshlets.truncate(size);
+
+    let middle = Instant::now();
+
+    let scale = simplify_scale(&mesh.vertices);
+
+    let mut lod = Vec::with_capacity(mesh.indices.len());
+
+    let mut error: f32 = 0.0;
+
+    for m in meshlets.iter() {
+        let cluster_offset = lod.len();
+
+        for j in 0..m.triangle_count * 3 {
+            lod.push(
+                meshlet_vertices
+                    [m.vertex_offset as usize + meshlet_triangles[m.triangle_offset as usize + j as usize] as usize],
+            );
+        }
+
+        let options = SimplificationOptions::SimplifyLockBorder
+            | SimplificationOptions::SimplifySparse
+            | SimplificationOptions::SimplifyErrorAbsolute;
+
+        let index_count = m.triangle_count as usize * 3;
+        let mut dest = vec![0u32; index_count];
+
+        let cluster_target_error = 1e-2 * scale;
+        let cluster_target = (m.triangle_count as f32 * threshold) as usize * 3;
+        let mut cluster_error = 0.0;
+
+        let cluster_size = simplify(
+            &mut dest,
+            &lod[cluster_offset..cluster_offset + index_count],
+            &mesh.vertices,
+            cluster_target,
+            cluster_target_error,
+            options,
+            Some(&mut cluster_error),
+        );
+
+        lod[cluster_offset..cluster_offset + cluster_size].copy_from_slice(&dest[0..cluster_size]);
+
+        error = error.max(cluster_error);
+
+        // simplified cluster is available in lod[cluster_offset..cluster_offset + cluster_size]
+        lod.resize(cluster_offset + cluster_size, 0);
+    }
+
+    let end = Instant::now();
+
+    println!(
+        "{:9}: {} triangles => {} triangles ({:.2}% deviation) in {:.2} msec, clusterized in {:.2} msec",
+        "SimplifyN", // N for Nanite
+        mesh.indices.len() / 3,
+        lod.len() / 3,
+        error / scale * 100.0,
+        (end - middle).as_micros() as f64 / 1000.0,
+        (middle - start).as_micros() as f64 / 1000.0
+    );
 }
 
 fn stripify_mesh(mesh: &Mesh, use_restart: bool, desc: char) {
@@ -1368,6 +1455,7 @@ fn process(mesh: &Mesh) {
         simplify_mesh_sloppy(mesh, 0.2);
         simplify_mesh_complete(mesh);
         simplify_mesh_points(mesh, 0.2);
+        simplify_mesh_clusters(mesh, 0.2);
     }
 
     spatial_sort_mesh(mesh);
