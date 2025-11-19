@@ -639,7 +639,7 @@ fn get_neighbor_triangle(
 /// * `meshlets`: must contain enough space for all meshlets, worst case size can be computed with [build_meshlets_bound]
 /// * `meshlet_vertices`: must contain enough space for all meshlets, worst case size is equal to `max_meshlets` * `max_vertices`
 /// * `meshlet_triangles`: must contain enough space for all meshlets, worst case size is equal to `max_meshlets` * `max_triangles * 3`
-/// * `max_vertices` and `max_triangles`: must not exceed implementation limits (`max_vertices` <= 255 - not 256!, `max_triangles` <= 512)
+/// * `max_vertices` and `max_triangles`: must not exceed implementation limits (`max_vertices` <= 255 - not 256!, `max_triangles` <= 512; `max_triangles` must be divisible by 4)
 /// * `cone_weight`: should be set to 0 when cone culling is not used, and a value between 0 and 1 otherwise to balance between cluster size and cone culling efficiency
 #[allow(clippy::too_many_arguments)]
 pub fn build_meshlets<V>(
@@ -1024,6 +1024,100 @@ where
     }
 
     compute_cluster_bounds(&indices[0..meshlet_triangles.len()], vertices)
+}
+
+/// Reorders meshlet vertices and triangles to maximize locality to improve rasterizer throughput
+///
+/// # Arguments
+///
+/// * `meshlet_vertices` and `meshlet_triangles`: must refer to meshlet triangle and vertex index data; when [`build_meshlets`] is used, these
+///   need to be computed from [Meshlet::vertex_offset] and [Meshlet::triangle_offset]
+#[cfg(feature = "experimental")]
+pub fn optimize_meshlet(meshlet_vertices: &mut [u32], meshlet_triangles: &mut [u8]) {
+    let triangle_count = meshlet_triangles.len() / 3;
+    let vertex_count = meshlet_vertices.len();
+
+    assert!(triangle_count <= MESHLET_MAX_TRIANGLES);
+    assert!(vertex_count <= MESHLET_MAX_VERTICES);
+
+    let indices = meshlet_triangles;
+    let vertices = meshlet_vertices;
+
+    // cache tracks vertex timestamps (corresponding to triangle index! all 3 vertices are added at the same time and never removed)
+    let mut cache = [0u8; MESHLET_MAX_VERTICES];
+
+    // note that we start from a value that means all vertices aren't in cache
+    let mut cache_last: u8 = 128;
+    const CACHE_CUTOFF: u8 = 3; // 3 triangles = ~5..9 vertices depending on reuse
+
+    for i in 0..triangle_count {
+        let mut next = -1;
+        let mut next_match = -1;
+
+        for (j, abc) in indices[i * 3..].as_chunks::<3>().0.iter().enumerate() {
+            assert!(abc.iter().all(|e| (*e as usize) < vertices.len()));
+
+            // score each triangle by how many vertices are in cache
+            // note: the distance is computed using unsigned 8-bit values, so cache timestamp overflow is handled gracefully
+            let sum = abc
+                .iter()
+                .map(|i| ((cache_last - cache[*i as usize]) < CACHE_CUTOFF) as i32)
+                .sum();
+
+            if sum > next_match {
+                next = (i + j) as i32;
+                next_match = sum;
+
+                // note that we could end up with all 3 vertices in the cache, but 2 is enough for ~strip traversal
+                if next_match >= 2 {
+                    break;
+                }
+            }
+        }
+
+        assert!(next >= 0);
+
+        let a = indices[next as usize * 3 + 0];
+        let b = indices[next as usize * 3 + 1];
+        let c = indices[next as usize * 3 + 2];
+
+        // shift triangles before the next one forward so that we always keep an ordered partition
+        // note: this could have swapped triangles [i] and [next] but that distorts the order and may skew the output sequence
+        let count = (next as usize - i) * 3;
+        indices.copy_within((i * 3)..(i * 3 + count), (i + 1) * 3);
+
+        indices[i * 3 + 0] = a;
+        indices[i * 3 + 1] = b;
+        indices[i * 3 + 2] = c;
+
+        // cache timestamp is the same between all vertices of each triangle to reduce overflow
+        cache_last += 1;
+        cache[a as usize] = cache_last;
+        cache[b as usize] = cache_last;
+        cache[c as usize] = cache_last;
+    }
+
+    // reorder meshlet vertices for access locality assuming index buffer is scanned sequentially
+    let mut order = [0u32; MESHLET_MAX_VERTICES];
+
+    let mut remap = [UNUSED; MESHLET_MAX_VERTICES];
+
+    let mut vertex_offset = 0;
+
+    for i in 0..triangle_count * 3 {
+        let r = &mut remap[indices[i] as usize];
+
+        if *r == UNUSED {
+            *r = vertex_offset as u8;
+            order[vertex_offset] = vertices[indices[i] as usize];
+            vertex_offset += 1;
+        }
+
+        indices[i] = *r;
+    }
+
+    assert!(vertex_offset <= vertex_count);
+    vertices.copy_from_slice(&order[0..vertex_offset]);
 }
 
 #[cfg(test)]

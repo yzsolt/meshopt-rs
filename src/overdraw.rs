@@ -52,8 +52,9 @@ fn rasterize(buffer: &mut OverdrawBuffer, mut v1: Vector3, mut v2: Vector3, mut 
 
     // flip backfacing triangles to simplify rasterization logic
     if sign {
-        // flipping v2 & v3 preserves depth gradients since they're based on v1
-        std::mem::swap(&mut v2, &mut v3);
+        // flipping v2 & v3 preserves depth gradients since they're based on v1; only v1z is used below
+        std::mem::swap(&mut v2.x, &mut v3.x);
+        std::mem::swap(&mut v2.y, &mut v3.y);
 
         // flip depth since we rasterize backfacing triangles to second buffer with reverse Z; only v1z is used below
         v1.z = VIEWPORT as f32 - v1.z;
@@ -148,7 +149,7 @@ where
 
     let mut result = OverdrawStatistics::default();
 
-    let (minv, extent) = calc_pos_extents(vertices);
+    let (minv, extent) = calc_pos_extents(vertices.iter().map(|v| v.pos()));
 
     let scale = VIEWPORT as f32 / extent;
 

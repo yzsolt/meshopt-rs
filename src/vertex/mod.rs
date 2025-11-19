@@ -48,16 +48,11 @@ impl Vertex for [f32; 3] {
     }
 }
 
-pub(crate) fn calc_pos_extents<V, const ATTR_COUNT: usize>(vertices: &[V]) -> ([f32; 3], f32)
-where
-    V: Vertex<ATTR_COUNT>,
-{
+pub(crate) fn calc_pos_extents(vertices: impl Iterator<Item = [f32; 3]>) -> ([f32; 3], f32) {
     let mut minv = [f32::MAX; 3];
     let mut maxv = [-f32::MAX; 3];
 
-    for vertex in vertices {
-        let v = vertex.pos();
-
+    for v in vertices {
         for j in 0..3 {
             minv[j] = minv[j].min(v[j]);
             maxv[j] = maxv[j].max(v[j]);

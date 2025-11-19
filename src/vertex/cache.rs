@@ -228,9 +228,6 @@ fn optimize_vertex_cache_table(
     let mut adjacency = TriangleAdjacency::default();
     build_triangle_adjacency(&mut adjacency, indices, vertex_count);
 
-    // live triangle counts
-    let mut live_triangles = adjacency.counts.clone();
-
     // emitted flags
     let mut emitted_flags = vec![false; face_count];
 
@@ -238,7 +235,7 @@ fn optimize_vertex_cache_table(
     let mut vertex_scores = vec![0.0; vertex_count];
 
     for (i, s) in vertex_scores.iter_mut().enumerate() {
-        *s = vertex_score(table, -1, live_triangles[i] as usize);
+        *s = vertex_score(table, -1, adjacency.counts[i] as usize);
     }
 
     // compute triangle scores
@@ -290,13 +287,9 @@ fn optimize_vertex_cache_table(
         std::mem::swap(&mut cache, &mut cache_new);
         cache_count = cache_write.min(cache_size);
 
-        // update live triangle counts
-        for e in abc {
-            live_triangles[*e as usize] -= 1;
-        }
-
         // remove emitted triangle from adjacency data
         // this makes sure that we spend less time traversing these lists on subsequent iterations
+        // live triangle counts (=adjacency.counts) are updated as a byproduct of these adjustments
         for index in abc {
             let index = *index as usize;
 
@@ -327,7 +320,7 @@ fn optimize_vertex_cache_table(
             let cache_position = if i >= cache_size { -1 } else { i as i32 };
 
             // update vertex score
-            let score = vertex_score(table, cache_position, live_triangles[index] as usize);
+            let score = vertex_score(table, cache_position, adjacency.counts[index] as usize);
             let score_diff = score - vertex_scores[index];
 
             vertex_scores[index] = score;

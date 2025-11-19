@@ -39,10 +39,10 @@ fn prepare_edge_adjacency(adjacency: &mut EdgeAdjacency, index_count: usize, ver
     adjacency.data = vec![Edge::default(); index_count];
 }
 
-fn update_edge_adjacency(adjacency: &mut EdgeAdjacency, indices: &[u32], remap: Option<&[u32]>) {
+fn update_edge_adjacency(adjacency: &mut EdgeAdjacency, indices: &[u32], vertex_count: usize, remap: Option<&[u32]>) {
     let face_count = indices.len() / 3;
 
-    let offsets = &mut adjacency.offsets[1..];
+    let offsets = &mut adjacency.offsets[1..vertex_count + 1];
 
     // fill edge counts
     offsets.fill(0);
@@ -53,6 +53,7 @@ fn update_edge_adjacency(adjacency: &mut EdgeAdjacency, indices: &[u32], remap: 
         } else {
             *index as usize
         };
+        assert!(v < vertex_count);
 
         offsets[v] += 1;
     }
@@ -135,18 +136,38 @@ mod hash {
     }
 
     impl Eq for VertexPosition {}
+
+    #[derive(PartialEq, Eq, Debug)]
+    pub struct RemapId(pub u32);
+
+    impl Hash for RemapId {
+        fn hash<H: Hasher>(&self, state: &mut H) {
+            state.write_u32(self.0.wrapping_mul(0x5bd1e995));
+        }
+    }
 }
 
-fn build_position_remap<V, const ATTR_COUNT: usize>(remap: &mut [u32], wedge: &mut [u32], vertices: &[V])
-where
+fn build_position_remap<V, const ATTR_COUNT: usize>(
+    remap: &mut [u32],
+    wedge: &mut [u32],
+    vertices: &[V],
+    vertex_count: usize,
+    sparse_remap: Option<&[u32]>,
+) where
     V: Vertex<ATTR_COUNT>,
 {
     let mut table = HashMap::with_capacity_and_hasher(vertices.len(), BuildNoopHasher::default());
 
     // build forward remap: for each vertex, which other (canonical) vertex does it map to?
     // we use position equivalence for this, and remap vertices to other existing vertices
-    for (index, vertex) in vertices.iter().enumerate() {
-        remap[index] = match table.entry(hash::VertexPosition(vertex.pos())) {
+    for (index, vertex) in vertices[0..vertex_count].iter().enumerate() {
+        let vp = if let Some(remap) = sparse_remap {
+            vertices[remap[index] as usize].pos()
+        } else {
+            vertex.pos()
+        };
+
+        remap[index] = match table.entry(hash::VertexPosition(vp)) {
             Entry::Occupied(entry) => *entry.get(),
             Entry::Vacant(entry) => {
                 entry.insert(index as u32);
@@ -171,6 +192,45 @@ where
             wedge[r] = i as u32;
         }
     }
+}
+
+fn build_sparse_remap<V, const ATTR_COUNT: usize>(indices: &mut [u32], vertices: &[V]) -> Vec<u32>
+where
+    V: Vertex<ATTR_COUNT>,
+{
+    // use a bit set to compute the precise number of unique vertices
+    let mut filter = vec![0u8; vertices.len().div_ceil(8)];
+
+    let mut unique = 0;
+    for index in indices.iter().map(|i| *i as usize) {
+        assert!(index < vertices.len());
+
+        unique += ((filter[index / 8] & (1 << (index % 8))) == 0) as usize;
+        filter[index / 8] |= 1 << (index % 8);
+    }
+
+    let mut remap = vec![0u32; unique];
+    let mut offset = 0;
+
+    // temporary map dense => sparse
+    let mut revremap = HashMap::with_capacity_and_hasher(unique, BuildNoopHasher::default());
+
+    // fill remap, using revremap as a helper, and rewrite indices in the same pass
+    for index in indices {
+        *index = match revremap.entry(hash::RemapId(*index)) {
+            Entry::Occupied(entry) => *entry.get(),
+            Entry::Vacant(entry) => {
+                remap[offset] = *index;
+                entry.insert(offset as u32);
+                offset += 1;
+                offset as u32 - 1
+            }
+        };
+    }
+
+    assert_eq!(offset, unique);
+
+    remap
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -239,6 +299,8 @@ fn classify_vertices(
     adjacency: &EdgeAdjacency,
     remap: &[u32],
     wedge: &[u32],
+    vertex_lock: Option<&[bool]>,
+    sparse_remap: Option<&[u32]>,
     options: SimplificationOptions,
 ) {
     // incoming & outgoing open edges: `INVALID_INDEX` if no open edges, i if there are more than 1
@@ -284,7 +346,12 @@ fn classify_vertices(
 
     for i in 0..vertex_count {
         if remap[i] == i as u32 {
-            if wedge[i] == i as u32 {
+            if let Some(vertex_lock) = vertex_lock
+                && vertex_lock[sparse_remap.map(|r| r[i] as usize).unwrap_or(i)]
+            {
+                // vertex is explicitly locked
+                result[i] = VertexKind::Locked;
+            } else if wedge[i] == i as u32 {
                 // no attribute seam, need to check if it's manifold
                 let openi = openinc[i];
                 let openo = openout[i];
@@ -371,21 +438,39 @@ fn classify_vertices(
     );
 }
 
-fn rescale_positions<V, const ATTR_COUNT: usize>(result: &mut [Vector3], vertices: &[V]) -> f32
+fn rescale_positions<V, const ATTR_COUNT: usize>(
+    result: &mut [Vector3],
+    vertices: &[V],
+    sparse_remap: Option<&[u32]>,
+) -> f32
 where
     V: Vertex<ATTR_COUNT>,
 {
-    let (minv, extent) = calc_pos_extents(vertices);
+    let (minv, extent) = if let Some(remap) = sparse_remap {
+        for (v, r) in remap
+            .iter()
+            .map(|ri| vertices[*ri as usize].pos())
+            .zip(result.iter_mut())
+        {
+            *r = Vector3 {
+                x: v[0],
+                y: v[1],
+                z: v[2],
+            };
+        }
 
-    for (i, vertex) in vertices.iter().enumerate() {
-        let v = vertex.pos();
+        calc_pos_extents(remap.iter().map(|ri| vertices[*ri as usize].pos()))
+    } else {
+        for (v, r) in vertices.iter().map(|v| v.pos()).zip(result.iter_mut()) {
+            *r = Vector3 {
+                x: v[0],
+                y: v[1],
+                z: v[2],
+            };
+        }
 
-        result[i] = Vector3 {
-            x: v[0],
-            y: v[1],
-            z: v[2],
-        };
-    }
+        calc_pos_extents(vertices.iter().map(|v| v.pos()))
+    };
 
     let scale = zero_inverse(extent);
 
@@ -400,19 +485,30 @@ where
 
 fn rescale_attributes<V, const ATTR_COUNT: usize>(
     vertices: &[V],
+    vertex_count: usize,
     attribute_weights: &[f32; ATTR_COUNT],
+    sparse_remap: Option<&[u32]>,
 ) -> Vec<[f32; ATTR_COUNT]>
 where
     V: Vertex<ATTR_COUNT>,
 {
-    let mut vertex_weighted_attrs = vec![[0f32; ATTR_COUNT]; vertices.len()];
+    let mut vertex_weighted_attrs = vec![[0f32; ATTR_COUNT]; vertex_count];
 
-    for (weighted_attrs, vertex) in vertex_weighted_attrs.iter_mut().zip(vertices.iter()) {
-        for (weighted_attr, (attr, attr_weight)) in weighted_attrs
-            .iter_mut()
-            .zip(vertex.attrs().iter().zip(attribute_weights.iter()))
-        {
-            *weighted_attr = attr * attr_weight;
+    for (weighted_attrs, (i, vertex)) in vertex_weighted_attrs.iter_mut().zip(vertices.iter().enumerate()) {
+        if let Some(remap) = sparse_remap {
+            for (weighted_attr, (attr, attr_weight)) in weighted_attrs
+                .iter_mut()
+                .zip(vertices[remap[i] as usize].attrs().iter().zip(attribute_weights.iter()))
+            {
+                *weighted_attr = attr * attr_weight;
+            }
+        } else {
+            for (weighted_attr, (attr, attr_weight)) in weighted_attrs
+                .iter_mut()
+                .zip(vertex.attrs().iter().zip(attribute_weights.iter()))
+            {
+                *weighted_attr = attr * attr_weight;
+            }
         }
     }
 
@@ -870,7 +966,13 @@ fn has_triangle_flip(a: &Vector3, b: &Vector3, c: &Vector3, d: &Vector3) -> bool
         eb.x * ed.y - eb.y * ed.x,
     );
 
-    nbc.x * nbd.x + nbc.y * nbd.y + nbc.z * nbd.z <= 0.0
+    let ndp = nbc.x * nbd.x + nbc.y * nbd.y + nbc.z * nbd.z;
+    let abc = nbc.x * nbc.x + nbc.y * nbc.y + nbc.z * nbc.z;
+    let abd = nbd.x * nbd.x + nbd.y * nbd.y + nbd.z * nbd.z;
+
+    // scale is cos(angle); somewhat arbitrarily set to ~75 degrees
+    // note that the "pure" check is ndp <= 0 (90 degree cutoff) but that allows flipping through a series of close-to-90 collapses
+    ndp <= 0.25 * (abc * abd).sqrt()
 }
 
 fn has_triangle_flips(
@@ -1097,6 +1199,7 @@ fn perform_edge_collapses<const ATTR_COUNT: usize>(
     attribute_quadrics: &mut [Quadric],
     attribute_gradients: &mut [[QuadricGrad; ATTR_COUNT]],
     collapses: &[Collapse],
+    collapse_count: usize,
     collapse_order: &[u32],
     remap: &[u32],
     wedge: &[u32],
@@ -1114,7 +1217,7 @@ fn perform_edge_collapses<const ATTR_COUNT: usize>(
     // note that edge_collapse_goal is an estimate; triangle_collapse_goal will be used to actually limit collapses
     let mut edge_collapse_goal = triangle_collapse_goal / 2;
 
-    for order in collapse_order {
+    for order in collapse_order.iter().take(collapse_count) {
         let c = collapses[*order as usize].clone();
 
         let error = unsafe { c.u.error };
@@ -1519,9 +1622,16 @@ mod experimental {
 }
 
 bitflags! {
+    #[derive(Clone, Copy)]
     pub struct SimplificationOptions: u32 {
         /// Do not move vertices that are located on the topological border (vertices on triangle edges that don't have a paired triangle). Useful for simplifying portions of the larger mesh.
         const SimplifyLockBorder = 1 << 0;
+
+        /// Improve simplification performance assuming input indices are a sparse subset of the mesh. Note that error becomes relative to subset extents.
+        const SimplifySparse = 1 << 1;
+
+        /// Treat error limit and resulting error as absolute instead of relative to mesh extents.
+        const SimplifyErrorAbsolute = 1 << 2;
     }
 }
 
@@ -1556,6 +1666,7 @@ where
         indices,
         vertices,
         &[],
+        None,
         target_index_count,
         target_error,
         options,
@@ -1572,6 +1683,7 @@ where
 ///
 /// * `vertex_attributes`: should have attribute_count floats for each vertex
 /// * `attribute_weights`: should have attribute_count floats in total; the weights determine relative priority of attributes between each other and wrt position. The recommended weight range is [1e-3..1e-1], assuming attribute data is in [0..1] range.
+/// * `vertex_lock`: when `Some`, it defines for each vertex if they can't be moved (`true`) or free to be simplified (`false`).
 ///
 /// TODO `target_error`/`result_error` currently use combined distance+attribute error; this may change in the future
 #[cfg(feature = "experimental")]
@@ -1581,6 +1693,7 @@ pub fn simplify_with_attributes<V, const ATTR_COUNT: usize>(
     indices: &[u32],
     vertices: &[V],
     attribute_weights: &[f32; ATTR_COUNT],
+    vertex_lock: Option<&[bool]>,
     target_index_count: usize,
     target_error: f32,
     options: SimplificationOptions,
@@ -1594,6 +1707,7 @@ where
         indices,
         vertices,
         attribute_weights,
+        vertex_lock,
         target_index_count,
         target_error,
         options,
@@ -1607,6 +1721,7 @@ fn simplify_edge<V, const ATTR_COUNT: usize>(
     indices: &[u32],
     vertices: &[V],
     attribute_weights: &[f32; ATTR_COUNT],
+    vertex_lock: Option<&[bool]>,
     target_index_count: usize,
     target_error: f32,
     options: SimplificationOptions,
@@ -1623,46 +1738,59 @@ where
     assert!(target_index_count <= indices.len());
 
     let result = &mut destination[0..indices.len()];
+    result.copy_from_slice(indices);
+
+    // build an index remap and update indices/vertex_count to minimize the subsequent work
+    // note: as a consequence, errors will be computed relative to the subset extent
+    let (vertex_count, sparse_remap) = if options.contains(SimplificationOptions::SimplifySparse) {
+        let remap = build_sparse_remap(result, vertices);
+        (remap.len(), Some(remap))
+    } else {
+        (vertices.len(), None)
+    };
+    let sparse_remap = sparse_remap.as_deref();
 
     // build adjacency information
     let mut adjacency = EdgeAdjacency::default();
-    prepare_edge_adjacency(&mut adjacency, indices.len(), vertices.len());
-    update_edge_adjacency(&mut adjacency, indices, None);
+    prepare_edge_adjacency(&mut adjacency, indices.len(), vertex_count);
+    update_edge_adjacency(&mut adjacency, result, vertex_count, None);
 
     // build position remap that maps each vertex to the one with identical position
-    let mut remap = vec![0u32; vertices.len()];
-    let mut wedge = vec![0u32; vertices.len()];
-    build_position_remap(&mut remap, &mut wedge, vertices);
+    let mut remap = vec![0u32; vertex_count];
+    let mut wedge = vec![0u32; vertex_count];
+    build_position_remap(&mut remap, &mut wedge, vertices, vertex_count, sparse_remap);
 
     // classify vertices; vertex kind determines collapse rules, see `CAN_COLLAPSE`
-    let mut vertex_kind = vec![VertexKind::Manifold; vertices.len()];
-    let mut loop_ = vec![INVALID_INDEX; vertices.len()];
-    let mut loopback = vec![INVALID_INDEX; vertices.len()];
+    let mut vertex_kind = vec![VertexKind::Manifold; vertex_count];
+    let mut loop_ = vec![INVALID_INDEX; vertex_count];
+    let mut loopback = vec![INVALID_INDEX; vertex_count];
     classify_vertices(
         &mut vertex_kind,
         &mut loop_,
         &mut loopback,
-        vertices.len(),
+        vertex_count,
         &adjacency,
         &remap,
         &wedge,
+        vertex_lock,
+        sparse_remap,
         options,
     );
 
     #[cfg(feature = "trace")]
     {
         let mut unique_positions = 0;
-        for (i, remapped) in remap.iter().enumerate().take(vertices.len()) {
+        for (i, remapped) in remap.iter().enumerate().take(vertex_count) {
             unique_positions += (*remapped as usize == i) as u32;
         }
 
         println!(
             "position remap: {} vertices => {unique_positions} positions",
-            vertices.len(),
+            vertex_count,
         );
 
         let mut kinds = [0_u32; KIND_COUNT];
-        for i in 0..vertices.len() {
+        for i in 0..vertex_count {
             kinds[vertex_kind[i].index()] += (remap[i] as usize == i) as u32;
         }
 
@@ -1676,30 +1804,30 @@ where
         );
     }
 
-    let mut vertex_positions = vec![Vector3::default(); vertices.len()]; // TODO: spare init?
-    rescale_positions(&mut vertex_positions, vertices);
+    let mut vertex_positions = vec![Vector3::default(); vertex_count]; // TODO: spare init?
+    let vertex_scale = rescale_positions(&mut vertex_positions, vertices, sparse_remap);
 
     let vertex_attributes = if ATTR_COUNT > 0 {
-        rescale_attributes(vertices, attribute_weights)
+        rescale_attributes(vertices, vertex_count, attribute_weights, sparse_remap)
     } else {
         Vec::new()
     };
 
-    let mut vertex_quadrics = vec![Quadric::default(); vertices.len()];
+    let mut vertex_quadrics = vec![Quadric::default(); vertex_count];
 
     let (mut attribute_quadrics, mut attribute_gradients) = if ATTR_COUNT > 0 {
         (
-            vec![Quadric::default(); vertices.len()],
-            vec![[QuadricGrad::default(); ATTR_COUNT]; vertices.len()],
+            vec![Quadric::default(); vertex_count],
+            vec![[QuadricGrad::default(); ATTR_COUNT]; vertex_count],
         )
     } else {
         (Vec::new(), Vec::new())
     };
 
-    fill_face_quadrics(&mut vertex_quadrics, indices, &vertex_positions, &remap);
+    fill_face_quadrics(&mut vertex_quadrics, result, &vertex_positions, &remap);
     fill_edge_quadrics(
         &mut vertex_quadrics,
-        indices,
+        result,
         &vertex_positions,
         &remap,
         &vertex_kind,
@@ -1711,34 +1839,37 @@ where
         fill_attribute_quadrics::<ATTR_COUNT>(
             &mut attribute_quadrics,
             &mut attribute_gradients,
-            indices,
+            result,
             &vertex_positions,
             &vertex_attributes,
             &remap,
         );
     }
 
-    result.copy_from_slice(indices);
-
     let collapse_capacity = bound_edge_collapses(&adjacency, indices.len(), &vertex_kind);
     // TODO: skip init?
     let mut edge_collapses = vec![Collapse::default(); collapse_capacity];
     let mut collapse_order = vec![0u32; collapse_capacity];
-    let mut collapse_remap = vec![0u32; vertices.len()];
-    let mut collapse_locked = vec![false; vertices.len()];
+    let mut collapse_remap = vec![0u32; vertex_count];
+    let mut collapse_locked = vec![false; vertex_count];
 
     let mut result_count = indices.len();
     let mut result_error_max = 0.0;
 
     // `target_error` input is linear; we need to adjust it to match `Quadric::error` units
-    let error_limit = target_error * target_error;
+    let error_scale = if options.contains(SimplificationOptions::SimplifyErrorAbsolute) {
+        vertex_scale
+    } else {
+        1.0
+    };
+    let error_limit = (target_error * target_error) / (error_scale * error_scale);
 
     #[cfg(feature = "trace")]
     let mut pass_count = 0;
 
     while result_count > target_index_count {
         // note: throughout the simplification process adjacency structure reflects welded topology for result-in-progress
-        update_edge_adjacency(&mut adjacency, &result[0..result_count], Some(&remap));
+        update_edge_adjacency(&mut adjacency, &result[0..result_count], vertex_count, Some(&remap));
 
         let edge_collapse_count = pick_edge_collapses(
             &mut edge_collapses,
@@ -1788,6 +1919,7 @@ where
             &mut attribute_quadrics,
             &mut attribute_gradients,
             &edge_collapses,
+            edge_collapse_count,
             &collapse_order,
             &remap,
             &wedge,
@@ -1808,20 +1940,28 @@ where
         remap_edge_loops(&mut loopback, &collapse_remap);
 
         let new_count = remap_index_buffer(&mut result[0..result_count], &collapse_remap);
-        assert!(new_count < result_count);
+        assert!(new_count < result_count, "{new_count} < {result_count}");
 
         result_count = new_count;
     }
 
     #[cfg(feature = "trace")]
     println!(
-        "result: {result_count} triangles, error: {:e}; total {pass_count} passes",
+        "result: {} triangles, error: {:e}; total {pass_count} passes",
+        result_count / 3,
         result_error_max.sqrt()
     );
 
+    // convert resulting indices back into the dense space of the larger mesh
+    if let Some(remap) = sparse_remap {
+        for result in result {
+            *result = remap[*result as usize];
+        }
+    }
+
     // result_error is quadratic; we need to remap it back to linear
     if let Some(result_error) = result_error {
-        *result_error = result_error_max.sqrt();
+        *result_error = result_error_max.sqrt() * error_scale;
     }
 
     result_count
@@ -1861,7 +2001,7 @@ where
     let target_cell_count = target_index_count / 6;
 
     let mut vertex_positions = vec![Vector3::default(); vertices.len()];
-    rescale_positions(&mut vertex_positions, vertices);
+    rescale_positions(&mut vertex_positions, vertices, None);
 
     // find the optimal grid size using guided binary search
     #[cfg(feature = "trace")]
@@ -2035,7 +2175,7 @@ where
     }
 
     let mut vertex_positions = vec![Vector3::default(); vertices.len()];
-    rescale_positions(&mut vertex_positions, vertices);
+    rescale_positions(&mut vertex_positions, vertices, None);
 
     // find the optimal grid size using guided binary search
     #[cfg(feature = "trace")]
@@ -2179,7 +2319,7 @@ pub fn simplify_scale<V>(vertices: &[V]) -> f32
 where
     V: Vertex,
 {
-    let (_minv, extent) = calc_pos_extents(vertices);
+    let (_minv, extent) = calc_pos_extents(vertices.iter().map(|v| v.pos()));
 
     extent
 }
@@ -2557,6 +2697,7 @@ mod test {
                 &ib,
                 &vb,
                 &attr_weights,
+                None,
                 6 * 3,
                 1e-2,
                 SimplificationOptions::empty(),
@@ -2565,5 +2706,233 @@ mod test {
             18
         );
         assert!(actual.iter().zip(expected.iter().flatten()).all(|(a, b)| a == b));
+    }
+
+    #[test]
+    #[cfg(feature = "experimental")]
+    fn test_simplify_lock_flags() {
+        #[rustfmt::skip]
+        let vb = vb_from_slice(&[
+            0.0, 0.0, 0.0,
+            0.0, 1.0, 0.0,
+            0.0, 2.0, 0.0,
+            1.0, 0.0, 0.0,
+            1.0, 1.0, 0.0,
+            1.0, 2.0, 0.0,
+            2.0, 0.0, 0.0,
+            2.0, 1.0, 0.0,
+            2.0, 2.0, 0.0,
+        ]);
+
+        #[rustfmt::skip]
+        let lock = [
+            true, true, true,
+            true, false, true,
+            true, true, true,
+        ];
+
+        // 0 1 2
+        // 3 4 5
+        // 6 7 8
+
+        #[rustfmt::skip]
+        let ib = [
+            0, 1, 3,
+            3, 1, 4,
+            1, 2, 4,
+            4, 2, 5,
+            3, 4, 6,
+            6, 4, 7,
+            4, 5, 7,
+            7, 5, 8,
+        ];
+
+        #[rustfmt::skip]
+        let expected = [
+            0, 1, 3,
+            1, 2, 3,
+            3, 2, 5,
+            6, 3, 7,
+            3, 5, 7,
+            7, 5, 8,
+        ];
+
+        let mut actual = vec![0u32; ib.len()];
+
+        assert_eq!(
+            simplify_with_attributes::<_, 0>(
+                &mut actual,
+                &ib,
+                &vb,
+                &[],
+                Some(&lock),
+                3,
+                1e-3,
+                SimplificationOptions::empty(),
+                None
+            ),
+            18
+        );
+        assert_eq!(&actual[0..expected.len()], expected);
+    }
+
+    #[test]
+    #[cfg(feature = "experimental")]
+    fn test_simplify_sparse() {
+        #[derive(Default, Clone, Copy)]
+        struct TestVertexWithAttributes(([f32; 3], f32));
+
+        impl Vertex<1> for TestVertexWithAttributes {
+            fn pos(&self) -> [f32; 3] {
+                self.0.0
+            }
+
+            fn attrs(&self) -> [f32; 1] {
+                [self.0.1]
+            }
+        }
+
+        #[rustfmt::skip]
+        let vb = vb_from_slice(&[
+            0.0, 0.0, 100.0,
+            0.0, 1.0, 0.0,
+            0.0, 2.0, 100.0,
+            1.0, 0.0, 0.1,
+            1.0, 1.0, 0.1,
+            1.0, 2.0, 0.1,
+            2.0, 0.0, 100.0,
+            2.0, 1.0, 0.0,
+            2.0, 2.0, 100.0,
+        ]);
+
+        #[rustfmt::skip]
+        let vba: Vec<TestVertexWithAttributes> = vb.iter().zip([
+            100.0, 
+            0.5, 
+            100.0, 
+            0.5, 
+            0.5, 
+            0.0, 
+            100.0, 
+            0.5, 
+            100.0
+        ].iter()).map(|(p, a)| TestVertexWithAttributes((p.pos(), *a))).collect();
+
+        let aw = [0.2];
+
+        #[rustfmt::skip]
+        let lock = [
+            true, true, true,
+            true, false, true,
+            true, true, true,
+        ];
+
+        //   1
+        // 3 4 5
+        //   7
+
+        #[rustfmt::skip]
+        let ib = [
+            3, 1, 4,
+            1, 5, 4,
+            3, 4, 7,
+            4, 5, 7,
+        ];
+
+        // vertices 3-4-5 are slightly elevated along Z which guides the collapses when only using geometry
+        #[rustfmt::skip]
+        let expected = [
+           	1, 5, 3,
+	        3, 5, 7,
+        ];
+
+        let mut actual = vec![0u32; ib.len()];
+
+        assert_eq!(
+            simplify::<_>(
+                &mut actual,
+                &ib,
+                &vb,
+                6,
+                1e-3,
+                SimplificationOptions::SimplifySparse,
+                None
+            ),
+            6
+        );
+        assert_eq!(&actual[0..expected.len()], expected);
+
+        // vertices 1-4-7 have a crease in the attribute value which guides the collapses the opposite way when weighing attributes sufficiently
+        #[rustfmt::skip]
+        let expecteda = [
+            3, 1, 7,
+            1, 5, 7,
+        ];
+
+        assert_eq!(
+            simplify_with_attributes::<_, 1>(
+                &mut actual,
+                &ib,
+                &vba,
+                &aw,
+                Some(&lock),
+                6,
+                1e-1,
+                SimplificationOptions::SimplifySparse,
+                None
+            ),
+            6
+        );
+        assert_eq!(&actual[0..expecteda.len()], expecteda);
+    }
+
+    #[test]
+    #[cfg(feature = "experimental")]
+    fn test_simplify_error_absolute() {
+        #[rustfmt::skip]
+        let vb = vb_from_slice(&[
+            0.0, 0.0, 0.0,
+            0.0, 1.0, 0.0,
+            0.0, 2.0, 0.0,
+            1.0, 0.0, 0.0,
+            1.0, 1.0, 1.0,
+            1.0, 2.0, 0.0,
+            2.0, 0.0, 0.0,
+            2.0, 1.0, 0.0,
+            2.0, 2.0, 0.0,
+        ]);
+
+        // 0 1 2
+        // 3 4 5
+        // 6 7 8
+
+        #[rustfmt::skip]
+        let ib = [
+            0, 1, 3,
+            3, 1, 4,
+            1, 2, 4,
+            4, 2, 5,
+            3, 4, 6,
+            6, 4, 7,
+            4, 5, 7,
+            7, 5, 8,
+        ];
+
+        let mut error = 0.0;
+        let mut actual = vec![0u32; ib.len()];
+
+        assert_eq!(
+            simplify::<_>(
+                &mut actual,
+                &ib,
+                &vb,
+                18,
+                2.0,
+                SimplificationOptions::SimplifyLockBorder | SimplificationOptions::SimplifyErrorAbsolute,
+                Some(&mut error)
+            ),
+            18
+        );
+        assert!((error - 0.85).abs() < 0.01);
     }
 }
