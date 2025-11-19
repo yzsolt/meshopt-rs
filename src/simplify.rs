@@ -624,21 +624,29 @@ impl Quadric {
     }
 
     pub fn from_triangle_edge(p0: &Vector3, p1: &Vector3, p2: &Vector3, weight: f32) -> Self {
-        let mut p10 = Vector3::new(p1.x - p0.x, p1.y - p0.y, p1.z - p0.z);
-        let length = p10.normalize();
+        let p10 = Vector3::new(p1.x - p0.x, p1.y - p0.y, p1.z - p0.z);
 
-        // p20p = length of projection of p2-p0 onto normalize(p1 - p0)
+        // edge length; keep squared length around for projection correction
+        let lengthsq = p10.length_squared();
+        let length = lengthsq.sqrt();
+
+        // p20p = length of projection of p2-p0 onto p1-p0; note that p10 is unnormalized so we need to correct it later
         let p20 = Vector3::new(p2.x - p0.x, p2.y - p0.y, p2.z - p0.z);
         let p20p = p20.x * p10.x + p20.y * p10.y + p20.z * p10.z;
 
-        // normal = altitude of triangle from point p2 onto edge p1-p0
-        let mut normal = Vector3::new(p20.x - p10.x * p20p, p20.y - p10.y * p20p, p20.z - p10.z * p20p);
-        normal.normalize();
+        // perp = perpendicular vector from p2 to line segment p1-p0
+        // note: since p10 is unnormalized we need to correct the projection; we scale p20 instead to take advantage of normalize below
+        let mut perp = Vector3::new(
+            p20.x * lengthsq - p10.x * p20p,
+            p20.y * lengthsq - p10.y * p20p,
+            p20.z * lengthsq - p10.z * p20p,
+        );
+        perp.normalize();
 
-        let distance = normal.x * p0.x + normal.y * p0.y + normal.z * p0.z;
+        let distance = perp.x * p0.x + perp.y * p0.y + perp.z * p0.z;
 
         // note: the weight is scaled linearly with edge length; this has to match the triangle weight
-        Self::from_plane(normal.x, normal.y, normal.z, -distance, length * weight)
+        Self::from_plane(perp.x, perp.y, perp.z, -distance, length * weight)
     }
 
     fn from_attributes<const ATTR_COUNT: usize>(
@@ -2672,7 +2680,7 @@ mod test {
                 let v = &mut vb[y * 3 + x].0;
                 v[0][0] = x as f32;
                 v[0][1] = y as f32;
-                v[0][2] = 0.03 * x as f32;
+                v[0][2] = 0.03 * x as f32 + 0.03 * (y % 2) as f32;
                 v[1][0] = r;
                 v[1][1] = g;
                 v[1][2] = b;
@@ -2694,12 +2702,20 @@ mod test {
 
         let ib = ib.iter().flatten().copied().collect::<Vec<_>>();
 
-        let attr_weights = [0.01, 0.01, 0.01];
+        let attr_weights = [0.5, 0.5, 0.5];
 
+        // *0  1   *2
+        //  3  4    5
+        //  6  7    8
+        // *9  10 *11
+        // *12 13 *14
+        //  15 16  17
+        //  18 19  20
+        // *21 22 *23
         let expected = [
-            [0, 2, 9, 9, 2, 11],
+            [0, 2, 11, 0, 11, 9],
             [9, 11, 12, 12, 11, 14],
-            [12, 14, 21, 21, 14, 23],
+            [12, 14, 23, 12, 23, 21],
         ];
 
         let mut actual = vec![0u32; ib.len()];
