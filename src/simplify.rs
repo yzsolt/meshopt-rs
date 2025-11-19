@@ -910,7 +910,6 @@ fn fill_attribute_quadrics<const ATTR_COUNT: usize>(
     indices: &[u32],
     vertex_positions: &[Vector3],
     vertex_attributes: &[[f32; ATTR_COUNT]],
-    remap: &[u32],
 ) {
     for i in indices.as_chunks::<3>().0 {
         let [i0, i1, i2] = i;
@@ -927,14 +926,13 @@ fn fill_attribute_quadrics<const ATTR_COUNT: usize>(
             &vertex_attributes[i2],
         );
 
-        // TODO: This blends together attribute weights across attribute discontinuities, which is probably not a great idea
-        attribute_quadrics[remap[i0] as usize] += qa;
-        attribute_quadrics[remap[i1] as usize] += qa;
-        attribute_quadrics[remap[i2] as usize] += qa;
+        attribute_quadrics[i0] += qa;
+        attribute_quadrics[i1] += qa;
+        attribute_quadrics[i2] += qa;
 
-        add_grads(&mut attribute_gradients[remap[i0] as usize], &g);
-        add_grads(&mut attribute_gradients[remap[i1] as usize], &g);
-        add_grads(&mut attribute_gradients[remap[i2] as usize], &g);
+        add_grads(&mut attribute_gradients[i0], &g);
+        add_grads(&mut attribute_gradients[i1], &g);
+        add_grads(&mut attribute_gradients[i2], &g);
     }
 }
 
@@ -1124,16 +1122,17 @@ fn rank_edge_collapses<const ATTR_COUNT: usize>(
         let mut ej = qj.error(&vertex_positions[j1 as usize]);
 
         if ATTR_COUNT > 0 {
-            let agi = attribute_quadrics[ri0];
-            let agj = attribute_quadrics[rj0];
+            let agi = attribute_quadrics[i0 as usize];
+            let agj = attribute_quadrics[j0 as usize];
 
+            // note: ideally we would evaluate max/avg of attribute errors for seam edges, but it's not clear if it's worth the extra cost
             ei += agi.error_grad(
-                &attribute_gradients[ri0],
+                &attribute_gradients[i0 as usize],
                 &vertex_positions[i1 as usize],
                 &vertex_attributes[i1 as usize],
             );
             ej += agj.error_grad(
-                &attribute_gradients[rj0],
+                &attribute_gradients[j0 as usize],
                 &vertex_positions[j1 as usize],
                 &vertex_attributes[j1 as usize],
             );
@@ -1239,6 +1238,8 @@ fn perform_edge_collapses<const ATTR_COUNT: usize>(
         let r0 = remap[i0] as usize;
         let r1 = remap[i1] as usize;
 
+        let kind = vertex_kind[i0];
+
         // we don't collapse vertices that had source or target vertex involved in a collapse
         // it's important to not move the vertices twice since it complicates the tracking/remapping logic
         // it's important to not move other vertices towards a moved vertex to preserve error since we don't re-rank collapses mid-pass
@@ -1258,18 +1259,31 @@ fn perform_edge_collapses<const ATTR_COUNT: usize>(
         vertex_quadrics[r1] += vertex_quadrics[r0];
 
         if ATTR_COUNT > 0 {
-            attribute_quadrics[r1] += attribute_quadrics[r0];
+            attribute_quadrics[i1] += attribute_quadrics[i0];
 
-            let copy = attribute_gradients[r0];
-            add_grads(&mut attribute_gradients[r1], &copy);
+            let copy = attribute_gradients[i0];
+            add_grads(&mut attribute_gradients[i1], &copy);
+
+            // note: this is intentionally missing handling for [VertexKind::Complex]; we assume that complex vertices have similar attribute values so just using the primary vertex is fine
+            if kind == VertexKind::Seam {
+                // seam collapses involve two edges so we need to update attribute quadrics for both target vertices; position quadrics are shared
+                let s0 = wedge[i0] as usize;
+                let s1 = wedge[i1] as usize;
+
+                attribute_quadrics[s1] += attribute_quadrics[s0];
+
+                let copy = attribute_gradients[s0];
+                add_grads(&mut attribute_gradients[s1], &copy);
+            }
         }
 
-        match vertex_kind[i0] {
+        match kind {
             VertexKind::Complex => {
+                // remap all vertices in the complex to the target vertex
                 let mut v = i0;
 
                 loop {
-                    collapse_remap[v] = r1 as u32;
+                    collapse_remap[v] = i1 as u32;
                     v = wedge[v] as usize;
 
                     if v == i0 {
@@ -1299,7 +1313,7 @@ fn perform_edge_collapses<const ATTR_COUNT: usize>(
         collapse_locked[r1] = true;
 
         // border edges collapse 1 triangle, other edges collapse 2 or more
-        triangle_collapses += if vertex_kind[i0] == VertexKind::Border { 1 } else { 2 };
+        triangle_collapses += if kind == VertexKind::Border { 1 } else { 2 };
         edge_collapses += 1;
 
         *result_error = result_error.max(unsafe { c.u.error });
@@ -1832,7 +1846,6 @@ where
             result,
             &vertex_positions,
             &vertex_attributes,
-            &remap,
         );
     }
 
@@ -1853,9 +1866,6 @@ where
         1.0
     };
     let error_limit = (target_error * target_error) / (error_scale * error_scale);
-
-    #[cfg(feature = "trace")]
-    let mut pass_count = 0;
 
     while result_count > target_index_count {
         // note: throughout the simplification process adjacency structure reflects welded topology for result-in-progress
@@ -1896,12 +1906,6 @@ where
 
         collapse_locked.fill(false);
 
-        #[cfg(feature = "trace")]
-        {
-            println!("pass: {pass_count}");
-            pass_count += 1;
-        }
-
         let collapses = perform_edge_collapses(
             &mut collapse_remap,
             &mut collapse_locked,
@@ -1934,13 +1938,6 @@ where
 
         result_count = new_count;
     }
-
-    #[cfg(feature = "trace")]
-    println!(
-        "result: {} triangles, error: {:e}; total {pass_count} passes",
-        result_count / 3,
-        result_error_max.sqrt()
-    );
 
     // convert resulting indices back into the dense space of the larger mesh
     if let Some(remap) = sparse_remap {
@@ -2330,6 +2327,25 @@ mod test {
         }
     }
 
+    #[derive(Default, Clone, Copy)]
+    struct TestVertexWith1Attribute(([f32; 3], f32));
+
+    impl Vertex<1> for TestVertexWith1Attribute {
+        fn pos(&self) -> [f32; 3] {
+            self.0.0
+        }
+
+        fn attrs(&self) -> [f32; 1] {
+            [self.0.1]
+        }
+    }
+
+    impl Vertex for TestVertexWith1Attribute {
+        fn pos(&self) -> [f32; 3] {
+            self.0.0
+        }
+    }
+
     fn vb_from_slice(slice: &[f32]) -> Vec<TestVertex> {
         slice
             .chunks_exact(3)
@@ -2338,6 +2354,13 @@ mod test {
                 y: v[1],
                 z: v[2],
             })
+            .collect()
+    }
+
+    fn vba_from_slice(slice: &[f32]) -> Vec<TestVertexWith1Attribute> {
+        slice
+            .chunks_exact(4)
+            .map(|v| TestVertexWith1Attribute(([v[0], v[1], v[2]], v[3])))
             .collect()
     }
 
@@ -2769,44 +2792,18 @@ mod test {
     #[test]
     #[cfg(feature = "experimental")]
     fn test_simplify_sparse() {
-        #[derive(Default, Clone, Copy)]
-        struct TestVertexWithAttributes(([f32; 3], f32));
-
-        impl Vertex<1> for TestVertexWithAttributes {
-            fn pos(&self) -> [f32; 3] {
-                self.0.0
-            }
-
-            fn attrs(&self) -> [f32; 1] {
-                [self.0.1]
-            }
-        }
-
         #[rustfmt::skip]
-        let vb = vb_from_slice(&[
-            0.0, 0.0, 100.0,
-            0.0, 1.0, 0.0,
-            0.0, 2.0, 100.0,
-            1.0, 0.0, 0.1,
-            1.0, 1.0, 0.1,
-            1.0, 2.0, 0.1,
-            2.0, 0.0, 100.0,
-            2.0, 1.0, 0.0,
-            2.0, 2.0, 100.0,
+        let vb = vba_from_slice(&[
+            0.0, 0.0, 100.0, 100.0,
+            0.0, 1.0, 0.0, 0.5,
+            0.0, 2.0, 100.0, 100.0,
+            1.0, 0.0, 0.1, 0.5,
+            1.0, 1.0, 0.1, 0.5,
+            1.0, 2.0, 0.1, 0.0,
+            2.0, 0.0, 100.0, 100.0,
+            2.0, 1.0, 0.0, 0.5,
+            2.0, 2.0, 100.0, 100.0,
         ]);
-
-        #[rustfmt::skip]
-        let vba: Vec<TestVertexWithAttributes> = vb.iter().zip([
-            100.0, 
-            0.5, 
-            100.0, 
-            0.5, 
-            0.5, 
-            0.0, 
-            100.0, 
-            0.5, 
-            100.0
-        ].iter()).map(|(p, a)| TestVertexWithAttributes((p.pos(), *a))).collect();
 
         let aw = [0.5];
 
@@ -2863,7 +2860,7 @@ mod test {
             simplify_with_attributes::<_, 1>(
                 &mut actual,
                 &ib,
-                &vba,
+                &vb,
                 &aw,
                 Some(&lock),
                 6,
@@ -2924,5 +2921,105 @@ mod test {
             18
         );
         assert!((error - 0.85).abs() < 0.01);
+    }
+
+    #[test]
+    #[cfg(feature = "experimental")]
+    fn test_simplify_seam() {
+        #[rustfmt::skip]
+        let vb = vba_from_slice(&[
+            0.0, 0.0, 0.0, 0.0,
+            0.0, 1.0, 0.0, 0.0,
+            0.0, 1.0, 0.0, 1.0,
+            0.0, 2.0, 0.0, 1.0,
+            1.0, 0.0, 0.0, 0.0,
+            1.0, 1.0, 0.3, 0.0,
+            1.0, 1.0, 0.3, 1.0,
+            1.0, 2.0, 0.0, 1.0,
+            2.0, 0.0, 0.0, 0.0,
+            2.0, 1.0, 0.1, 0.0,
+            2.0, 1.0, 0.1, 1.0,
+            2.0, 2.0, 0.0, 1.0,
+            3.0, 0.0, 0.0, 0.0,
+            3.0, 1.0, 0.0, 0.0,
+            3.0, 1.0, 0.0, 1.0,
+            3.0, 2.0, 0.0, 1.0,
+        ]);
+
+        // 0   1-2   3
+        // 4   5-6   7
+        // 8   9-10 11
+        // 12 13-14 15
+
+        #[rustfmt::skip]
+        let ib = [
+            0, 1, 4,
+            4, 1, 5,
+            2, 3, 6,
+            6, 3, 7,
+            4, 5, 8,
+            8, 5, 9,
+            6, 7, 10,
+            10, 7, 11,
+            8, 9, 12,
+            12, 9, 13,
+            10, 11, 14,
+            14, 11, 15,
+        ];
+
+        // note: vertices 1-2 and 13-14 are classified as locked, because they are on a seam & a border
+        // since seam->locked collapses are restriced, we only get to 3 triangles on each side as the seam is simplified to 3 vertices
+
+        // so we get this structure initially, and then one of the internal seam vertices is collapsed to the other one:
+        // 0   1-2   3
+        //     5-6
+        //     9-10
+        // 12 13-14 15
+
+        #[rustfmt::skip]
+        let expected = [
+            0, 1, 5,
+            2, 3, 6,
+            0, 5, 12,
+            12, 5, 13,
+            6, 3, 14,
+            14, 3, 15,
+        ];
+
+        let mut error = 0.0;
+        let mut actual = vec![0u32; ib.len()];
+
+        assert_eq!(
+            simplify::<_>(
+                &mut actual,
+                &ib,
+                &vb,
+                18,
+                1.0,
+                SimplificationOptions::empty(),
+                Some(&mut error)
+            ),
+            18
+        );
+        assert_eq!(&actual[0..expected.len()], expected);
+        assert!((error - 0.04).abs() < 0.01); // note: the error is not zero because there is a small difference in height between the seam vertices
+
+        let aw = [1.0];
+        assert_eq!(
+            simplify_with_attributes::<_, _>(
+                &mut actual,
+                &ib,
+                &vb,
+                &aw,
+                None,
+                18,
+                2.0,
+                SimplificationOptions::empty(),
+                Some(&mut error)
+            ),
+            18
+        );
+        assert_eq!(&actual[0..expected.len()], expected);
+        assert!((error - 0.04).abs() < 0.01); // note: this is the same error as above because the attribute is constant on either side of the seam
     }
 }
