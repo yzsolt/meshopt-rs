@@ -1031,7 +1031,7 @@ where
 /// # Arguments
 ///
 /// * `meshlet_vertices` and `meshlet_triangles`: must refer to meshlet triangle and vertex index data; when [`build_meshlets`] is used, these
-/// need to be computed from [Meshlet::vertex_offset] and [Meshlet::triangle_offset]
+///   need to be computed from [Meshlet::vertex_offset] and [Meshlet::triangle_offset]
 #[cfg(feature = "experimental")]
 pub fn optimize_meshlet(meshlet_vertices: &mut [u32], meshlet_triangles: &mut [u8]) {
     let triangle_count = meshlet_triangles.len() / 3;
@@ -1083,7 +1083,7 @@ pub fn optimize_meshlet(meshlet_vertices: &mut [u32], meshlet_triangles: &mut [u
 
         // shift triangles before the next one forward so that we always keep an ordered partition
         // note: this could have swapped triangles [i] and [next] but that distorts the order and may skew the output sequence
-        let count = ((next as usize - i) * 3) as usize;
+        let count = (next as usize - i) * 3;
         indices.copy_within((i * 3)..(i * 3 + count), (i + 1) * 3);
 
         indices[i * 3 + 0] = a;

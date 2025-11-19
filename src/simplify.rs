@@ -199,7 +199,7 @@ where
     V: Vertex<ATTR_COUNT>,
 {
     // use a bit set to compute the precise number of unique vertices
-    let mut filter = vec![0u8; (vertices.len() + 7) / 8];
+    let mut filter = vec![0u8; vertices.len().div_ceil(8)];
 
     let mut unique = 0;
     for index in indices.iter().map(|i| *i as usize) {
@@ -1748,7 +1748,7 @@ where
     } else {
         (vertices.len(), None)
     };
-    let sparse_remap = sparse_remap.as_ref().map(std::ops::Deref::deref);
+    let sparse_remap = sparse_remap.as_deref();
 
     // build adjacency information
     let mut adjacency = EdgeAdjacency::default();
