@@ -2709,6 +2709,7 @@ mod test {
     }
 
     #[test]
+    #[cfg(feature = "experimental")]
     fn test_simplify_lock_flags() {
         #[rustfmt::skip]
         let vb = vb_from_slice(&[
@@ -2776,6 +2777,7 @@ mod test {
     }
 
     #[test]
+    #[cfg(feature = "experimental")]
     fn test_simplify_sparse() {
         #[derive(Default, Clone, Copy)]
         struct TestVertexWithAttributes(([f32; 3], f32));
@@ -2885,6 +2887,7 @@ mod test {
     }
 
     #[test]
+    #[cfg(feature = "experimental")]
     fn test_simplify_error_absolute() {
         #[rustfmt::skip]
         let vb = vb_from_slice(&[

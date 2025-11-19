@@ -873,6 +873,7 @@ fn simplify_mesh_complete(mesh: &Mesh) {
     }
 }
 
+#[cfg(feature = "experimental")]
 fn simplify_mesh_clusters(mesh: &Mesh, threshold: f32) {
     // note: we use clusters that are larger than normal to give simplifier room to work; in practice you'd use cluster groups merged from smaller clusters and build a cluster DAG
     const MAX_VERTICES: usize = 255;
@@ -1067,6 +1068,7 @@ fn meshlets(mesh: &Mesh, scan: bool) {
 
     meshlets.truncate(size);
 
+    #[cfg(feature = "experimental")]
     for meshlet in &meshlets {
         optimize_meshlet(
             &mut meshlet_vertices
