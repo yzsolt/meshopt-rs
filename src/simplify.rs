@@ -20,7 +20,7 @@ use std::collections::{HashMap, hash_map::Entry};
 use std::fmt::Debug;
 use std::ops::AddAssign;
 
-const MAX_ATTRIBUTES: usize = 16;
+const MAX_ATTRIBUTES: usize = 32;
 
 #[derive(Clone, Default)]
 struct Edge {
@@ -1681,6 +1681,7 @@ where
 ///
 /// # Arguments
 ///
+/// * `ATTR_COUNT`: must be <= 32. Only include attributes with weight > 0 to minimize memory/compute overhead.
 /// * `vertex_attributes`: should have attribute_count floats for each vertex
 /// * `attribute_weights`: should have attribute_count floats in total; the weights determine relative priority of attributes between each other and wrt position. The recommended weight range is [1e-3..1e-1], assuming attribute data is in [0..1] range.
 /// * `vertex_lock`: when `Some`, it defines for each vertex if they can't be moved (`true`) or free to be simplified (`false`).
@@ -1736,6 +1737,8 @@ where
 
     assert_eq!(indices.len() % 3, 0);
     assert!(target_index_count <= indices.len());
+    assert!(target_error >= 0.0);
+    assert!(attribute_weights.iter().all(|w| *w >= 0.0));
 
     let result = &mut destination[0..indices.len()];
     result.copy_from_slice(indices);

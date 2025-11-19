@@ -1467,7 +1467,7 @@ fn process(mesh: &Mesh) {
 }
 
 fn process_dev(mesh: &Mesh) {
-    simplify_mesh(mesh);
+    simplify_attr(mesh, 0.2);
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
