@@ -1405,6 +1405,55 @@ fn tessellation_adjacency(mesh: &Mesh) {
     );
 }
 
+fn provoking(mesh: &Mesh) {
+    let start = Instant::now();
+
+    // worst case number of vertices: vertex count + triangle count
+    let mut pib = vec![0u32; mesh.indices.len()];
+    let mut reorder = vec![0u32; mesh.vertices.len() + mesh.indices.len() / 3];
+
+    let pcount = generate_provoking_index_buffer(&mut pib, &mut reorder, &mesh.indices, mesh.vertices.len());
+    reorder.truncate(pcount);
+
+    let duration = start.elapsed();
+
+    // validate invariant: pib[i] == i/3 for provoking vertices
+    for i in (0..mesh.indices.len()).step_by(3) {
+        assert_eq!(pib[i] as usize, i / 3);
+    }
+
+    // validate invariant: reorder[pib[x]] == ib[x] modulo triangle rotation
+    // note: this is technically not promised by the interface (it may reorder triangles!), it just happens to hold right now
+    for i in (0..mesh.indices.len()).step_by(3) {
+        let a = mesh.indices[i + 0];
+        let b = mesh.indices[i + 1];
+        let c = mesh.indices[i + 2];
+        let ra = reorder[pib[i + 0] as usize];
+        let rb = reorder[pib[i + 1] as usize];
+        let rc = reorder[pib[i + 2] as usize];
+
+        assert!((a == ra && b == rb && c == rc) || (a == rb && b == rc && c == ra) || (a == rc && b == ra && c == rb));
+    }
+
+    // best case number of vertices: max(vertex count, triangle count), assuming non-redundant indexing (all vertices are used)
+    // note: this is a lower bound, and it's not theoretically possible on some meshes;
+    // for example, a union of a flat shaded cube (12t 24v) and a smooth shaded icosahedron (20t 12v) will have 36 vertices and 32 triangles
+    // however, the best case for that union is 44 vertices (24 cube vertices + 20 icosahedron vertices due to provoking invariant)
+    let bestv = if mesh.vertices.len() > mesh.indices.len() / 3 {
+        mesh.vertices.len()
+    } else {
+        mesh.indices.len() / 3
+    };
+
+    println!(
+        "Provoking: {} triangles / {} vertices (+{:.1}% extra) in {:.2} msec",
+        mesh.indices.len() / 3,
+        pcount,
+        pcount as f64 / bestv as f64 * 100.0 - 100.0,
+        duration.as_micros() as f64 / 1000.0
+    );
+}
+
 fn process(mesh: &Mesh) {
     optimize(mesh, "Original", |_| {});
     optimize(mesh, "Random", opt_random_shuffle);
@@ -1435,6 +1484,7 @@ fn process(mesh: &Mesh) {
 
     shadow(&copy);
     tessellation_adjacency(&copy);
+    provoking(&copy);
 
     encode_index(&copy, ' ');
     encode_index(&copystrip, 'S');

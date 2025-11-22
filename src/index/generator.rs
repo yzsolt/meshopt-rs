@@ -2,6 +2,7 @@
 
 // This work is based on:
 // John McDonald, Mark Kilgard. Crack-Free Point-Normal Triangles using Adjacent Edge Normals. 2010
+// John Hable. Variable Rate Shading with Visibility Buffer Rendering. 2024
 
 use crate::hash::BuildNoopHasher;
 use crate::{INVALID_INDEX, Stream};
@@ -361,6 +362,137 @@ pub fn generate_tessellation_index_buffer(destination: &mut [u32], indices: &[u3
     }
 }
 
+/// Generates index buffer that can be used for visibility buffer rendering and returns the size of the reorder table
+///
+/// Each triangle's provoking vertex index is equal to primitive id; this allows passing it to the fragment shader using nointerpolate attribute.
+/// This is important for performance on hardware where primitive id can't be accessed efficiently in fragment shader.
+/// The reorder table stores the original vertex id for each vertex in the new index buffer, and should be used in the vertex shader to load vertex data.
+/// The provoking vertex is assumed to be the first vertex in the triangle; if this is not the case (OpenGL), rotate each triangle (abc -> bca) before rendering.
+/// For maximum efficiency the input index buffer should be optimized for vertex cache first.
+///
+/// # Arguments
+///
+/// - `destination`: must contain enough space for the resulting index buffer (`indices.len()` elements)
+/// - `reorder`: must contain enough space for the worst case reorder table (`vertex_count` + `indices.len()`/3 elements)
+#[cfg(feature = "experimental")]
+pub fn generate_provoking_index_buffer(
+    destination: &mut [u32],
+    reorder: &mut [u32],
+    indices: &[u32],
+    vertex_count: usize,
+) -> usize {
+    assert!(indices.len().is_multiple_of(3));
+
+    let mut remap = vec![INVALID_INDEX; vertex_count];
+
+    // compute vertex valence; this is used to prioritize least used corner
+    // note: we use 8-bit counters for performance; for outlier vertices the valence is incorrect but that just affects the heuristic
+    let mut valence = vec![0u8; vertex_count];
+
+    for index in indices.iter().map(|i| *i as usize) {
+        assert!(index < vertex_count);
+
+        valence[index] += 1;
+    }
+
+    let mut reorder_offset: usize = 0;
+
+    // assign provoking vertices; leave the rest for the next pass
+    for (abc, dst) in indices
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .zip(destination.as_chunks_mut::<3>().0.iter_mut())
+    {
+        assert!(abc.iter().all(|i| (*i as usize) < vertex_count));
+        let [a, b, c] = abc;
+        let [mut a, mut b, mut c] = [*a as usize, *b as usize, *c as usize];
+
+        // try to rotate triangle such that provoking vertex hasn't been seen before
+        // if multiple vertices are new, prioritize the one with least valence
+        // this reduces the risk that a future triangle will have all three vertices seen
+        let va = if remap[a] == INVALID_INDEX {
+            valence[a] as u32
+        } else {
+            INVALID_INDEX
+        };
+        let vb = if remap[b] == INVALID_INDEX {
+            valence[b] as u32
+        } else {
+            INVALID_INDEX
+        };
+        let vc = if remap[c] == INVALID_INDEX {
+            valence[c] as u32
+        } else {
+            INVALID_INDEX
+        };
+
+        if vb != INVALID_INDEX && vb <= va && vb <= vc {
+            // abc -> bca
+            let t = a;
+            a = b;
+            b = c;
+            c = t;
+        } else if vc != INVALID_INDEX && vc <= va && vc <= vb {
+            // abc -> cab
+            let t = c;
+            c = b;
+            b = a;
+            a = t;
+        }
+
+        let newidx = reorder_offset as u32;
+
+        // now remap[a] = INVALID_INDEX or all three vertices are old
+        // recording remap[a] makes it possible to remap future references to the same index, conserving space
+        if remap[a] == INVALID_INDEX {
+            remap[a] = newidx;
+        }
+
+        // we need to clone the provoking vertex to get a unique index
+        // if all three are used the choice is arbitrary since no future triangle will be able to reuse any of these
+        reorder[reorder_offset] = a as u32;
+        reorder_offset += 1;
+
+        // note: first vertex is final, the other two will be fixed up in next pass
+        dst[0] = newidx;
+        dst[1] = b as u32;
+        dst[2] = c as u32;
+
+        // update vertex valences for corner heuristic
+        valence[a] -= 1;
+        valence[b] -= 1;
+        valence[c] -= 1;
+    }
+
+    // remap or clone non-provoking vertices (iterating to skip provoking vertices)
+    let mut step = 1;
+    let mut i = 1;
+
+    while i < indices.len() {
+        let index = destination[i] as usize;
+
+        if remap[index] == INVALID_INDEX {
+            // we haven't seen the vertex before as a provoking vertex
+            // to maintain the reference to the original vertex we need to clone it
+            let newidx = reorder_offset as u32;
+
+            remap[index] = newidx;
+            reorder[reorder_offset] = index as u32;
+            reorder_offset += 1;
+        }
+
+        destination[i] = remap[index];
+
+        i += step;
+        step ^= 3;
+    }
+
+    assert!(reorder_offset <= vertex_count + indices.len() / 3);
+
+    reorder_offset
+}
+
 /// Generate index buffer that can be used as a geometry shader input with triangle adjacency topology
 ///
 /// Each triangle is converted into a 6-vertex patch with the following layout:
@@ -492,5 +624,38 @@ mod test {
         ];
 
         assert_eq!(adjib, expected);
+    }
+
+    #[test]
+    fn test_provoking() {
+        // 0 1 2
+        // 3 4 5
+        #[rustfmt::skip]
+        let ib = [
+            0, 1, 3,
+            3, 1, 4,
+            1, 2, 4,
+            4, 2, 5,
+            0, 2, 4,
+        ];
+
+        let mut pib = [0u32; 15];
+        let mut pre = [0u32; 6 + 5]; // limit is vertex count + triangle count
+        let res = generate_provoking_index_buffer(&mut pib, &mut pre, &ib, 6);
+
+        #[rustfmt::skip]
+        let expectedib = [
+            0, 5, 1,
+            1, 4, 0,
+            2, 4, 1,
+            3, 4, 2,
+            4, 5, 2,
+        ];
+
+        let expectedre = [3, 1, 2, 5, 4, 0];
+
+        assert_eq!(6, res);
+        assert_eq!(expectedib, pib);
+        assert_eq!(expectedre, &pre[..expectedre.len()]);
     }
 }
