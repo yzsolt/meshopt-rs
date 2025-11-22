@@ -1154,14 +1154,20 @@ fn rank_edge_collapses<const ATTR_COUNT: usize>(
 }
 
 fn sort_edge_collapses(sort_order: &mut [u32], collapses: &[Collapse]) {
-    const SORT_BITS: usize = 11;
+    // we use counting sort to order collapses by error; since the exact sort order is not as critical,
+    // only top 12 bits of exponent+mantissa (8 bits of exponent and 4 bits of mantissa) are used.
+    // to avoid excessive stack usage, we clamp the exponent range as collapses with errors much higher than 1 are not useful.
+    const SORT_BITS: u32 = 12;
+    const SORT_BINS: u32 = 2048 + 512; // exponent range [-127, 32)
 
     // fill histogram for counting sort
-    let mut histogram = [0u32; 1 << SORT_BITS];
+    let mut histogram = [0u32; SORT_BINS as usize];
 
     for c in collapses {
         // skip sign bit since error is non-negative
-        let key = unsafe { (c.u.errorui << 1) >> (32 - SORT_BITS) };
+        let error = unsafe { c.u.errorui };
+        let mut key = (error << 1) >> (32 - SORT_BITS);
+        key = if key < SORT_BINS { key } else { SORT_BINS - 1 };
 
         histogram[key as usize] += 1;
     }
@@ -1180,7 +1186,9 @@ fn sort_edge_collapses(sort_order: &mut [u32], collapses: &[Collapse]) {
     // compute sort order based on offsets
     for (i, c) in collapses.iter().enumerate() {
         // skip sign bit since error is non-negative
-        let key = unsafe { ((c.u.errorui << 1) >> (32 - SORT_BITS)) as usize };
+        let error = unsafe { c.u.errorui };
+        let key = (error << 1) >> (32 - SORT_BITS);
+        let key = if key < SORT_BINS { key } else { SORT_BINS - 1 } as usize;
 
         sort_order[histogram[key] as usize] = i as u32;
         histogram[key] += 1;
@@ -2681,7 +2689,7 @@ mod test {
                 let v = &mut vb[y * 3 + x].0;
                 v[0][0] = x as f32;
                 v[0][1] = y as f32;
-                v[0][2] = 0.03 * x as f32 + 0.03 * (y % 2) as f32;
+                v[0][2] = 0.03 * x as f32 + 0.03 * (y % 2) as f32 + (x == 2 && y == 7) as u32 as f32 * 0.03;
                 v[1][0] = r;
                 v[1][1] = g;
                 v[1][2] = b;
