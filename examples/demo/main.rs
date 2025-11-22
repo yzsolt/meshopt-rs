@@ -1,5 +1,7 @@
 #![allow(clippy::identity_op)]
 
+mod nanite;
+
 use meshopt_rs::cluster::*;
 use meshopt_rs::index::buffer::*;
 use meshopt_rs::index::generator::*;
@@ -21,6 +23,8 @@ use std::fmt::Debug;
 use std::hash::{Hash, Hasher};
 use std::path::Path;
 use std::time::Instant;
+
+use nanite::nanite;
 
 #[derive(Clone, Copy, Default, Debug)]
 #[repr(C)]
@@ -1031,6 +1035,16 @@ fn shadow(mesh: &Mesh) {
     );
 }
 
+fn follow(parents: &mut [u32], mut index: u32) -> u32 {
+    while index != parents[index as usize] {
+        let parent = parents[index as usize];
+        parents[index as usize] = parents[parent as usize];
+        index = parent;
+    }
+
+    index
+}
+
 fn meshlets(mesh: &Mesh, scan: bool) {
     const MAX_VERTICES: usize = 64;
     const MAX_TRIANGLES: usize = 124; // NVidia-recommended 126, rounded down to a multiple of 4
@@ -1091,20 +1105,48 @@ fn meshlets(mesh: &Mesh, scan: bool) {
     let mut vertices = 0;
     let mut triangles = 0;
     let mut not_full = 0;
+    let mut not_connected = 0;
 
     for m in &meshlets {
         vertices += m.vertex_count as usize;
         triangles += m.triangle_count as usize;
         not_full += ((m.vertex_count as usize) < MAX_VERTICES) as usize;
+
+        // union-find vertices to check if the meshlet is connected
+        let mut parents = [0u32; MAX_VERTICES];
+        for j in 0..m.vertex_count {
+            parents[j as usize] = j;
+        }
+
+        for j in 0..m.triangle_count * 3 {
+            let mut v0 = meshlet_triangles[(m.triangle_offset + j) as usize] as u32;
+            let mut v1 = meshlet_triangles
+                [(m.triangle_offset as i32 + j as i32 + if j % 3 == 2 { -2 } else { 1 }) as usize]
+                as u32;
+
+            v0 = follow(&mut parents, v0);
+            v1 = follow(&mut parents, v1);
+
+            parents[v0 as usize] = v1;
+        }
+
+        let mut roots = 0;
+        for j in 0..m.vertex_count {
+            roots += (follow(&mut parents, j) == j) as usize;
+        }
+
+        assert_ne!(roots, 0);
+        not_connected += (roots > 1) as usize;
     }
 
     println!(
-        "Meshlets{}: {} meshlets (avg vertices {:.1}, avg triangles {:.1}, not full {}) in {:.2} msec",
+        "Meshlets{}: {} meshlets (avg vertices {:.1}, avg triangles {:.1}, not full {}, not connected {}) in {:.2} msec",
         if scan { 'S' } else { ' ' },
         meshlets.len(),
         vertices as f64 / meshlets.len() as f64,
         triangles as f64 / meshlets.len() as f64,
         not_full,
+        not_connected,
         duration.as_micros() as f64 / 1000.0
     );
 
@@ -1521,18 +1563,22 @@ fn process_dev(#[allow(unused)] mesh: &Mesh) {
     simplify_attr(mesh, 0.2);
 }
 
+fn process_nanite(mesh: &Mesh) {
+    nanite(&mesh.vertices, &mesh.indices);
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = env::args().skip(1).collect();
-    let dev_mode = match args.first() {
-        Some(arg) => arg == "-d",
-        None => false,
-    };
+    let dev_mode = args.first().map(|a| a == "-d").unwrap_or(false);
+    let nanite = args.first().map(|a| a == "-n").unwrap_or(false);
 
-    for arg in args.iter().skip(if dev_mode { 1 } else { 0 }) {
+    for arg in args.iter().skip(if dev_mode || nanite { 1 } else { 0 }) {
         let mesh = Mesh::load(arg.clone())?;
 
         if dev_mode {
             process_dev(&mesh);
+        } else if nanite {
+            process_nanite(&mesh);
         } else {
             process(&mesh);
             process_deinterleaved(arg)?;
