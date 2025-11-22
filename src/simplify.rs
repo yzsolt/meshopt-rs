@@ -1694,7 +1694,7 @@ where
 ///
 /// * `ATTR_COUNT`: must be <= 32. Only include attributes with weight > 0 to minimize memory/compute overhead.
 /// * `vertex_attributes`: should have attribute_count floats for each vertex
-/// * `attribute_weights`: should have attribute_count floats in total; the weights determine relative priority of attributes between each other and wrt position. The recommended weight range is [1e-3..1e-1], assuming attribute data is in [0..1] range.
+/// * `attribute_weights`: should have attribute_count floats in total; the weights determine relative priority of attributes between each other and wrt position
 /// * `vertex_lock`: when `Some`, it defines for each vertex if they can't be moved (`true`) or free to be simplified (`false`).
 #[cfg(feature = "experimental")]
 #[allow(clippy::too_many_arguments)]
@@ -2149,6 +2149,7 @@ where
 /// # Arguments
 ///
 /// * `destination`: must contain enough space for the target index buffer (`target_vertex_count` elements)
+/// * `color_weight`: determines relative priority of color wrt position; 1.0 is a safe default
 #[cfg(feature = "experimental")]
 pub fn simplify_points<V>(
     destination: &mut [u32],
