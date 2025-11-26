@@ -258,14 +258,14 @@ impl VertexKind {
 const KIND_COUNT: usize = 5;
 
 // manifold vertices can collapse onto anything
-// border/seam vertices can only be collapsed onto border/seam respectively
+// border/seam vertices can collapse onto border/seam respectively, or locked
 // complex vertices can collapse onto complex/locked
 // a rule of thumb is that collapsing kind A into kind B preserves the kind B in the target vertex
 // for example, while we could collapse Complex into Manifold, this would mean the target vertex isn't Manifold anymore
 const CAN_COLLAPSE: [[bool; KIND_COUNT]; KIND_COUNT] = [
     [true, true, true, true, true],
-    [false, true, false, false, false],
-    [false, false, true, false, false],
+    [false, true, false, false, true],
+    [false, false, true, false, true],
     [false, false, false, true, true],
     [false, false, false, false, false],
 ];
@@ -389,7 +389,10 @@ fn classify_vertices(
                     && openow != INVALID_INDEX as usize
                     && openow != w
                 {
-                    if remap[openiv] == remap[openow] && remap[openov] == remap[openiw] {
+                    if remap[openiv] == remap[openow]
+                        && remap[openov] == remap[openiw]
+                        && remap[openiv] != remap[openov]
+                    {
                         result[i] = VertexKind::Seam;
                     } else {
                         result[i] = VertexKind::Locked;
@@ -1031,6 +1034,7 @@ fn pick_edge_collapses(
     remap: &[u32],
     vertex_kind: &[VertexKind],
     loop_: &[u32],
+    loopback: &[u32],
 ) -> usize {
     let mut collapse_count = 0;
 
@@ -1071,6 +1075,17 @@ fn pick_edge_collapses(
             // loop[] tracks half edges so we only need to check i0->i1
             if k0 == k1 && (k0 == VertexKind::Border || k0 == VertexKind::Seam) && loop_[i0] != i1 as u32 {
                 continue;
+            }
+
+            if k0 == VertexKind::Locked || k1 == VertexKind::Locked {
+                // the same check as above, but for border/seam -> locked collapses
+                // loop[] and loopback[] track half edges so we only need to check one of them
+                if (k0 == VertexKind::Border || k0 == VertexKind::Seam) && loop_[i0] as usize != i1 {
+                    continue;
+                }
+                if (k1 == VertexKind::Border || k1 == VertexKind::Seam) && loopback[i1] as usize != i0 {
+                    continue;
+                }
             }
 
             // edge can be collapsed in either direction - we will pick the one with minimum error
@@ -1208,6 +1223,8 @@ fn perform_edge_collapses<const ATTR_COUNT: usize>(
     remap: &[u32],
     wedge: &[u32],
     vertex_kind: &[VertexKind],
+    loop_: &[u32],
+    loopback: &[u32],
     vertex_positions: &[Vector3],
     adjacency: &EdgeAdjacency,
     triangle_collapse_goal: usize,
@@ -1272,6 +1289,28 @@ fn perform_edge_collapses<const ATTR_COUNT: usize>(
         assert_eq!(collapse_remap[r0] as usize, r0);
         assert_eq!(collapse_remap[r1] as usize, r1);
 
+        let mut sx = i1;
+
+        // for seam collapses we need to move the seam pair together; this is a bit tricky to compute since we need to rely on edge loops as target vertex may be locked (and thus have more than two wedges)
+        if kind == VertexKind::Seam {
+            let s0 = wedge[i0];
+            let s1: u32 = if loop_[i0] as usize == i1 {
+                loopback[s0 as usize]
+            } else {
+                loop_[s0 as usize]
+            };
+            assert!(s0 as usize != i0 && wedge[s0 as usize] as usize == i0);
+            assert!(s1 != INVALID_INDEX && remap[s1 as usize] as usize == r1);
+
+            // additional asserts to verify that the seam pair is consistent
+            assert!(kind != vertex_kind[i1] || s1 == wedge[i1]);
+            assert!(loop_[i0] as usize == i1 || loopback[i0] as usize == i1);
+            assert!(loop_[s0 as usize] == s1 || loopback[s0 as usize] == s1);
+
+            // note: this should never happen due to the assertion above, but when disabled if we ever hit this case we'll get a memory safety issue; for now play it safe
+            sx = if s1 != INVALID_INDEX { s1 } else { wedge[i1] } as usize;
+        }
+
         vertex_quadrics[r1] += vertex_quadrics[r0];
 
         if ATTR_COUNT > 0 {
@@ -1284,7 +1323,7 @@ fn perform_edge_collapses<const ATTR_COUNT: usize>(
             if kind == VertexKind::Seam {
                 // seam collapses involve two edges so we need to update attribute quadrics for both target vertices; position quadrics are shared
                 let s0 = wedge[i0] as usize;
-                let s1 = wedge[i1] as usize;
+                let s1 = sx;
 
                 attribute_quadrics[s1] += attribute_quadrics[s0];
 
@@ -1310,10 +1349,10 @@ fn perform_edge_collapses<const ATTR_COUNT: usize>(
             VertexKind::Seam => {
                 // remap v0 to v1 and seam pair of v0 to seam pair of v1
                 let s0 = wedge[i0] as usize;
-                let s1 = wedge[i1] as usize;
+                let s1 = sx;
 
-                assert!(s0 != i0 && s1 != i1);
-                assert!(wedge[s0] as usize == i0 && wedge[s1] as usize == i1);
+                assert!(s0 != i0 && wedge[s0] as usize == i0);
+                assert_eq!(remap[s1] as usize, r1);
 
                 collapse_remap[i0] = i1 as u32;
                 collapse_remap[s0] = s1 as u32;
@@ -1364,12 +1403,23 @@ fn remap_index_buffer(indices: &mut [u32], collapse_remap: &[u32]) -> usize {
 
 fn remap_edge_loops(loop_: &mut [u32], collapse_remap: &[u32]) {
     for i in 0..loop_.len() {
+        // note: this is a no-op for vertices that were remapped
+        // ideally we would clear the loop entries for those for consistency, even though they aren't going to be used
+        // however, the remapping process needs loop information for remapped vertices, so this would require a separate pass
         if loop_[i] != INVALID_INDEX {
             let l = loop_[i];
             let r = collapse_remap[l as usize];
 
             // i == r is a special case when the seam edge is collapsed in a direction opposite to where loop goes
-            loop_[i] = if i == r as usize { loop_[l as usize] } else { r };
+            loop_[i] = if i == r as usize {
+                if loop_[l as usize] != INVALID_INDEX {
+                    collapse_remap[loop_[l as usize] as usize]
+                } else {
+                    INVALID_INDEX
+                }
+            } else {
+                r
+            };
         }
     }
 }
@@ -1894,6 +1944,7 @@ where
             &remap,
             &vertex_kind,
             &loop_,
+            &loopback,
         );
         assert!(edge_collapse_count <= collapse_capacity);
 
@@ -1934,6 +1985,8 @@ where
             &remap,
             &wedge,
             &vertex_kind,
+            &loop_,
+            &loopback,
             &vertex_positions,
             &adjacency,
             triangle_collapse_goal,
@@ -2993,9 +3046,6 @@ mod test {
         ];
 
         // note: vertices 1-2 and 13-14 are classified as locked, because they are on a seam & a border
-        // since seam->locked collapses are restriced, we only get to 3 triangles on each side as the seam is simplified to 3 vertices
-
-        // so we get this structure initially, and then one of the internal seam vertices is collapsed to the other one:
         // 0   1-2   3
         //     5-6
         //     9-10
@@ -3003,11 +3053,9 @@ mod test {
 
         #[rustfmt::skip]
         let expected = [
-            0, 1, 5,
-            2, 3, 6,
-            0, 5, 12,
-            12, 5, 13,
-            6, 3, 14,
+            0, 1, 13,
+            2, 3, 14,
+            0, 13, 12,
             14, 3, 15,
         ];
 
@@ -3019,15 +3067,15 @@ mod test {
                 &mut actual,
                 &ib,
                 &vb,
-                18,
+                12,
                 1.0,
                 SimplificationOptions::empty(),
                 Some(&mut error)
             ),
-            18
+            12
         );
         assert_eq!(&actual[0..expected.len()], expected);
-        assert!((error - 0.04).abs() < 0.01); // note: the error is not zero because there is a small difference in height between the seam vertices
+        assert!((error - 0.09).abs() < 0.01); // note: the error is not zero because there is a difference in height between the seam vertices
 
         let aw = [1.0];
         assert_eq!(
@@ -3037,14 +3085,39 @@ mod test {
                 &vb,
                 &aw,
                 None,
-                18,
+                12,
                 2.0,
                 SimplificationOptions::empty(),
                 Some(&mut error)
             ),
-            18
+            12
         );
         assert_eq!(&actual[0..expected.len()], expected);
-        assert!((error - 0.04).abs() < 0.01); // note: this is the same error as above because the attribute is constant on either side of the seam
+        assert!((error - 0.09).abs() < 0.01); // note: this is the same error as above because the attribute is constant on either side of the seam
+    }
+
+    #[test]
+    #[cfg(feature = "experimental")]
+    fn test_simplify_seam_fake() {
+        #[rustfmt::skip]
+        let vb = vba_from_slice(&[
+            0.0, 0.0, 0.0, 0.0,
+            1.0, 0.0, 0.0, 1.0,
+            1.0, 0.0, 0.0, 2.0,
+            0.0, 0.0, 0.0, 3.0,
+        ]);
+
+        #[rustfmt::skip]
+        let ib = [
+            0, 1, 2,
+            2, 1, 3,
+        ];
+
+        let mut dest = ib.clone();
+
+        assert_eq!(
+            simplify(&mut dest, &ib, &vb, 0, 1.0, SimplificationOptions::empty(), None),
+            6
+        );
     }
 }
