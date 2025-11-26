@@ -1364,6 +1364,8 @@ fn perform_edge_collapses<const ATTR_COUNT: usize>(
             }
         }
 
+        // note: we technically don't need to lock r1 if it's a locked vertex, as it can't move and its quadric won't be used
+        // however, this results in slightly worse error on some meshes because the locked collapses get an unfair advantage wrt scheduling
         collapse_locked[r0] = true;
         collapse_locked[r1] = true;
 
