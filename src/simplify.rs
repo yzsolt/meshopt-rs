@@ -1424,6 +1424,162 @@ fn remap_edge_loops(loop_: &mut [u32], collapse_remap: &[u32]) {
     }
 }
 
+fn follow(parents: &mut [u32], mut index: u32) -> u32 {
+    while index != parents[index as usize] {
+        let parent = parents[index as usize];
+        parents[index as usize] = parents[parent as usize];
+        index = parent;
+    }
+
+    index
+}
+
+fn build_components(components: &mut [u32], vertex_count: usize, indices: &[u32], remap: &[u32]) -> usize {
+    for i in 0..vertex_count {
+        components[i] = i as u32;
+    }
+
+    // compute a unique (but not sequential!) index for each component via union-find
+    for (i, _) in indices.iter().enumerate().step_by(3) {
+        const NEXT: [usize; 4] = [1, 2, 0, 1];
+
+        for e in 0..3 {
+            let i0 = indices[i + e];
+            let i1 = indices[i + NEXT[e]];
+
+            let mut r0 = remap[i0 as usize];
+            let mut r1 = remap[i1 as usize];
+
+            r0 = follow(components, r0);
+            r1 = follow(components, r1);
+
+            // merge components with larger indices into components with smaller indices
+            // this guarantees that the root of the component is always the one with the smallest index
+            if r0 != r1 {
+                components[r0.max(r1) as usize] = r0.min(r1);
+            }
+        }
+    }
+
+    // make sure each element points to the component root *before* we renumber the components
+    for i in 0..vertex_count {
+        if remap[i] as usize == i {
+            components[i] = follow(components, i as u32);
+        }
+    }
+
+    let mut next_component = 0;
+
+    // renumber components using sequential indices
+    // a sequential pass is sufficient because component root always has the smallest index
+    // note: it is unsafe to use follow() in this pass because we're replacing component links with sequential indices inplace
+    for i in 0..vertex_count {
+        if remap[i] as usize == i {
+            let root = components[i] as usize;
+            assert!(root <= i); // make sure we already computed the component for non-roots
+            components[i] = if root == i {
+                next_component += 1;
+                next_component - 1
+            } else {
+                components[root]
+            };
+        } else {
+            assert!((remap[i] as usize) < i); // make sure we already computed the component
+            components[i] = components[remap[i] as usize];
+        }
+    }
+
+    next_component as usize
+}
+
+fn measure_components(
+    component_errors: &mut [f32],
+    component_count: usize,
+    components: &[u32],
+    vertex_positions: &[Vector3],
+) {
+    component_errors.fill(0.0);
+
+    // compute approximate sphere center for each component as an average
+    for i in 0..vertex_positions.len() {
+        let c = components[i] as usize;
+        assert!((components[i] as usize) < component_count);
+
+        let v = vertex_positions[i]; // copy avoids aliasing issues
+
+        component_errors[c * 4 + 0] += v.x;
+        component_errors[c * 4 + 1] += v.y;
+        component_errors[c * 4 + 2] += v.z;
+        component_errors[c * 4 + 3] += 1.0; // weight
+    }
+
+    // complete the center computation, and reinitialize [3] as a radius
+    for i in 0..component_count {
+        let w = component_errors[i * 4 + 3];
+        let iw = zero_inverse(w);
+
+        component_errors[i * 4 + 0] *= iw;
+        component_errors[i * 4 + 1] *= iw;
+        component_errors[i * 4 + 2] *= iw;
+        component_errors[i * 4 + 3] = 0.0; // radius
+    }
+
+    // compute squared radius for each component
+    for i in 0..vertex_positions.len() {
+        let c = components[i] as usize;
+
+        let dx = vertex_positions[i].x - component_errors[c * 4 + 0];
+        let dy = vertex_positions[i].y - component_errors[c * 4 + 1];
+        let dz = vertex_positions[i].z - component_errors[c * 4 + 2];
+        let r = dx * dx + dy * dy + dz * dz;
+
+        component_errors[c * 4 + 3] = r.max(component_errors[c * 4 + 3]);
+    }
+
+    // we've used the output buffer as scratch space, so we need to move the results to proper indices
+    for i in 0..component_count {
+        // note: we keep the squared error to make it match quadric error metric
+        component_errors[i] = component_errors[i * 4 + 3];
+    }
+}
+
+fn prune_components(
+    indices: &mut [u32],
+    components: &[u32],
+    component_errors: &[f32],
+    component_count: usize,
+    error_cutoff: f32,
+    nexterror: &mut f32,
+) -> usize {
+    let mut write = 0;
+
+    for i in (0..indices.len()).step_by(3) {
+        let i0 = indices[i + 0];
+        let i1 = indices[i + 1];
+        let i2 = indices[i + 2];
+
+        let c = components[i0 as usize];
+        assert!(c == components[i1 as usize] && c == components[i2 as usize]);
+
+        if component_errors[c as usize] > error_cutoff {
+            indices[write + 0] = i0;
+            indices[write + 1] = i1;
+            indices[write + 2] = i2;
+            write += 3;
+        }
+    }
+
+    // update next error with the smallest error of the remaining components for future pruning
+    *nexterror = f32::MAX;
+    for i in 0..component_count {
+        if component_errors[i] > error_cutoff {
+            *nexterror = nexterror.min(component_errors[i]);
+        }
+    }
+
+    write
+}
+
 #[cfg(feature = "experimental")]
 mod experimental {
     use super::*;
@@ -1701,6 +1857,9 @@ bitflags! {
 
         /// Treat error limit and resulting error as absolute instead of relative to mesh extents.
         const SimplifyErrorAbsolute = 1 << 2;
+
+        /// Experimental: remove disconnected parts of the mesh during simplification incrementally, regardless of the topological restrictions inside components.
+        const SimplifyPrune = 1 << 3;
     }
 }
 
@@ -1915,6 +2074,31 @@ where
         );
     }
 
+    let mut components = Vec::new();
+    let mut component_errors = Vec::new();
+    let mut component_count = 0;
+    let mut component_nexterror = 0.0;
+
+    if options.contains(SimplificationOptions::SimplifyPrune) {
+        components = vec![0u32; vertex_count];
+        component_count = build_components(&mut components, vertex_count, result, &remap);
+
+        component_errors = vec![0f32; component_count * 4]; // overallocate for temporary use inside measure_components
+        measure_components(
+            &mut component_errors,
+            component_count,
+            &components,
+            &vertex_positions[..vertex_count],
+        );
+
+        component_nexterror = component_errors
+            .iter()
+            .take(component_count)
+            .copied()
+            .min_by(|a, b| a.partial_cmp(&b).unwrap_or(std::cmp::Ordering::Equal))
+            .unwrap_or(f32::MAX);
+    }
+
     let collapse_capacity = bound_edge_collapses(&adjacency, indices.len(), &vertex_kind);
     // TODO: skip init?
     let mut edge_collapses = vec![Collapse::default(); collapse_capacity];
@@ -2006,6 +2190,51 @@ where
         assert!(new_count < result_count, "{new_count} < {result_count}");
 
         result_count = new_count;
+
+        if options.contains(SimplificationOptions::SimplifyPrune)
+            && result_count > target_index_count
+            && component_nexterror <= result_error_max
+        {
+            result_count = prune_components(
+                &mut result[0..result_count],
+                &components,
+                &component_errors,
+                component_count,
+                result_error_max,
+                &mut component_nexterror,
+            );
+        }
+    }
+
+    // we're done with the regular simplification but we're still short of the target; try pruning more aggressively towards error_limit
+    while options.contains(SimplificationOptions::SimplifyPrune)
+        && result_count > target_index_count
+        && component_nexterror <= error_limit
+    {
+        let component_cutoff = error_limit.min(component_nexterror * 1.5);
+
+        // track maximum error in eligible components as we are increasing resulting error
+        let mut component_maxerror = 0.0;
+        for i in 0..component_count {
+            if component_errors[i] > component_maxerror && component_errors[i] <= component_cutoff {
+                component_maxerror = component_errors[i];
+            }
+        }
+
+        let new_count = prune_components(
+            &mut result[0..result_count],
+            &components,
+            &component_errors,
+            component_count,
+            component_cutoff,
+            &mut component_nexterror,
+        );
+        if new_count == result_count {
+            break;
+        }
+
+        result_count = new_count;
+        result_error_max = result_error_max.max(component_maxerror);
     }
 
     // convert resulting indices back into the dense space of the larger mesh
@@ -3119,5 +3348,89 @@ mod test {
             simplify(&mut dest, &ib, &vb, 0, 1.0, SimplificationOptions::empty(), None),
             6
         );
+    }
+
+    #[test]
+    fn test_simplify_prune() {
+        // 0
+        // 1 2
+        // 3 4 5
+        // +
+        // 6 7 8 (same position)
+        #[rustfmt::skip]
+        let mut ib = [
+            0, 2, 1,
+            1, 2, 3,
+            3, 2, 4,
+            2, 5, 4,
+            6, 7, 8,
+        ];
+
+        #[rustfmt::skip]
+        let vb = vb_from_slice(&[
+            0.0, 4.0, 0.0,
+            0.0, 1.0, 0.0,
+            2.0, 2.0, 0.0,
+            0.0, 0.0, 0.0,
+            1.0, 0.0, 0.0,
+            4.0, 0.0, 0.0,
+            1.0, 1.0, 1.0,
+            1.0, 1.0, 1.0,
+            1.0, 1.0, 1.0,
+        ]);
+
+        #[rustfmt::skip]
+        let expected = [
+            0,
+            5,
+            3,
+        ];
+
+        let mut dst = vec![0; ib.len()];
+
+        let mut error = f32::MAX;
+        assert_eq!(
+            simplify(
+                &mut dst,
+                &ib,
+                &vb,
+                3,
+                1e-2,
+                SimplificationOptions::SimplifyPrune,
+                Some(&mut error)
+            ),
+            expected.len()
+        );
+        assert_eq!(error, 0.0);
+        assert_eq!(&dst[0..expected.len()], expected);
+
+        // re-run prune with and without sparsity on a small subset to make sure the component code correctly handles sparse subsets
+        ib[0..3].copy_from_slice(&dst[0..3]);
+        assert_eq!(
+            simplify(
+                &mut dst,
+                &ib[0..3],
+                &vb,
+                3,
+                1e-2,
+                SimplificationOptions::SimplifyPrune,
+                Some(&mut error)
+            ),
+            expected.len()
+        );
+        ib[0..3].copy_from_slice(&dst[0..3]);
+        assert_eq!(
+            simplify(
+                &mut dst,
+                &ib[0..3],
+                &vb,
+                3,
+                1e-2,
+                SimplificationOptions::SimplifyPrune | SimplificationOptions::SimplifySparse,
+                Some(&mut error)
+            ),
+            expected.len()
+        );
+        assert_eq!(&dst[0..expected.len()], expected);
     }
 }

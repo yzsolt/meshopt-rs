@@ -575,9 +575,7 @@ where
     );
 }
 
-fn simplify_mesh(mesh: &Mesh) {
-    let threshold = 0.2;
-
+fn simplify_mesh(mesh: &Mesh, threshold: f32, options: SimplificationOptions) {
     let mut lod = Mesh::default();
 
     let start = Instant::now();
@@ -593,7 +591,7 @@ fn simplify_mesh(mesh: &Mesh) {
         &mesh.vertices,
         target_index_count,
         target_error,
-        SimplificationOptions::empty(),
+        options,
         Some(&mut result_error),
     );
     lod.indices.resize(size, 0);
@@ -616,7 +614,7 @@ fn simplify_mesh(mesh: &Mesh) {
 }
 
 #[cfg(feature = "experimental")]
-fn simplify_attr(mesh: &Mesh, threshold: f32) {
+fn simplify_attr(mesh: &Mesh, threshold: f32, options: SimplificationOptions) {
     let mut lod = Mesh::default();
 
     let start = Instant::now();
@@ -637,7 +635,7 @@ fn simplify_attr(mesh: &Mesh, threshold: f32) {
         None,
         target_index_count,
         target_error,
-        SimplificationOptions::empty(),
+        options,
         Some(&mut result_error),
     );
     lod.indices.truncate(size);
@@ -1541,11 +1539,12 @@ fn process(mesh: &Mesh) {
     encode_vertex(&copy);
     encode_vertex_oct(&copy);
 
-    simplify_mesh(mesh);
+    simplify_mesh(mesh, 0.2, SimplificationOptions::empty());
+    simplify_mesh(mesh, 0.1, SimplificationOptions::SimplifyPrune);
 
     #[cfg(feature = "experimental")]
     {
-        simplify_attr(mesh, 0.2);
+        simplify_attr(mesh, 0.2, SimplificationOptions::empty());
         simplify_mesh_sloppy(mesh, 0.2);
         simplify_mesh_complete(mesh);
         simplify_mesh_points(mesh, 0.2);
@@ -1560,7 +1559,7 @@ fn process(mesh: &Mesh) {
 
 fn process_dev(#[allow(unused)] mesh: &Mesh) {
     #[cfg(feature = "experimental")]
-    simplify_attr(mesh, 0.2);
+    simplify_attr(mesh, 0.1, SimplificationOptions::SimplifyPrune);
 }
 
 fn process_nanite(mesh: &Mesh) {
