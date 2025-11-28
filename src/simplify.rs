@@ -1228,9 +1228,6 @@ fn sort_edge_collapses(sort_order: &mut [u32], collapses: &[Collapse]) {
 fn perform_edge_collapses<const ATTR_COUNT: usize>(
     collapse_remap: &mut [u32],
     collapse_locked: &mut [bool],
-    vertex_quadrics: &mut [Quadric],
-    attribute_quadrics: &mut [Quadric],
-    attribute_gradients: &mut [[QuadricGrad; ATTR_COUNT]],
     collapses: &[Collapse],
     collapse_count: usize,
     collapse_order: &[u32],
@@ -1244,7 +1241,6 @@ fn perform_edge_collapses<const ATTR_COUNT: usize>(
     triangle_collapse_goal: usize,
     error_limit: f32,
     result_error: &mut f32,
-    vertex_error: &mut f32,
 ) -> usize {
     let mut edge_collapses = 0;
     let mut triangle_collapses = 0;
@@ -1304,49 +1300,6 @@ fn perform_edge_collapses<const ATTR_COUNT: usize>(
         assert_eq!(collapse_remap[r0] as usize, r0);
         assert_eq!(collapse_remap[r1] as usize, r1);
 
-        let mut sx = i1;
-
-        // for seam collapses we need to move the seam pair together; this is a bit tricky to compute since we need to rely on edge loops as target vertex may be locked (and thus have more than two wedges)
-        if kind == VertexKind::Seam {
-            let s0 = wedge[i0];
-            let s1: u32 = if loop_[i0] as usize == i1 {
-                loopback[s0 as usize]
-            } else {
-                loop_[s0 as usize]
-            };
-            assert!(s0 as usize != i0 && wedge[s0 as usize] as usize == i0);
-            assert!(s1 != INVALID_INDEX && remap[s1 as usize] as usize == r1);
-
-            // additional asserts to verify that the seam pair is consistent
-            assert!(kind != vertex_kind[i1] || s1 == wedge[i1]);
-            assert!(loop_[i0] as usize == i1 || loopback[i0] as usize == i1);
-            assert!(loop_[s0 as usize] == s1 || loopback[s0 as usize] == s1);
-
-            // note: this should never happen due to the assertion above, but when disabled if we ever hit this case we'll get a memory safety issue; for now play it safe
-            sx = if s1 != INVALID_INDEX { s1 } else { wedge[i1] } as usize;
-        }
-
-        vertex_quadrics[r1] += vertex_quadrics[r0];
-
-        if ATTR_COUNT > 0 {
-            attribute_quadrics[i1] += attribute_quadrics[i0];
-
-            let copy = attribute_gradients[i0];
-            add_grads(&mut attribute_gradients[i1], &copy);
-
-            // note: this is intentionally missing handling for [VertexKind::Complex]; we assume that complex vertices have similar attribute values so just using the primary vertex is fine
-            if kind == VertexKind::Seam {
-                // seam collapses involve two edges so we need to update attribute quadrics for both target vertices; position quadrics are shared
-                let s0 = wedge[i0] as usize;
-                let s1 = sx;
-
-                attribute_quadrics[s1] += attribute_quadrics[s0];
-
-                let copy = attribute_gradients[s0];
-                add_grads(&mut attribute_gradients[s1], &copy);
-            }
-        }
-
         match kind {
             VertexKind::Complex => {
                 // remap all vertices in the complex to the target vertex
@@ -1362,15 +1315,27 @@ fn perform_edge_collapses<const ATTR_COUNT: usize>(
                 }
             }
             VertexKind::Seam => {
-                // remap v0 to v1 and seam pair of v0 to seam pair of v1
+                // for seam collapses we need to move the seam pair together; this is a bit tricky to compute since we need to rely on edge loops as target vertex may be locked (and thus have more than two wedges)
                 let s0 = wedge[i0] as usize;
-                let s1 = sx;
+                let mut s1 = if loop_[i0] as usize == i1 {
+                    loopback[s0]
+                } else {
+                    loop_[s0]
+                };
 
                 assert!(s0 != i0 && wedge[s0] as usize == i0);
-                assert_eq!(remap[s1] as usize, r1);
+                assert!(s1 != INVALID_INDEX && remap[s1 as usize] as usize == r1);
+
+                // additional asserts to verify that the seam pair is consistent
+                assert!(kind != vertex_kind[i1] || s1 == wedge[i1]);
+                assert!(loop_[i0] as usize == i1 || loopback[i0] as usize == i1);
+                assert!(loop_[s0] == s1 || loopback[s0] == s1);
+
+                // note: this should never happen due to the assertion above, but when disabled if we ever hit this case we'll get a memory safety issue; for now play it safe
+                s1 = if s1 != INVALID_INDEX { s1 } else { wedge[i1] };
 
                 collapse_remap[i0] = i1 as u32;
-                collapse_remap[s0] = s1 as u32;
+                collapse_remap[s0] = s1;
             }
             _ => {
                 assert_eq!(wedge[i0] as usize, i0);
@@ -1388,18 +1353,51 @@ fn perform_edge_collapses<const ATTR_COUNT: usize>(
         triangle_collapses += if kind == VertexKind::Border { 1 } else { 2 };
         edge_collapses += 1;
 
-        // when attributes are used, distance error needs to be recomputed as collapses don't track it; it is safe to do this after the quadric adjustment
-        let derr = if ATTR_COUNT == 0 {
-            unsafe { c.u.error }
-        } else {
-            vertex_quadrics[r0].error(&vertex_positions[r1])
-        };
-
         *result_error = result_error.max(unsafe { c.u.error });
-        *vertex_error = vertex_error.max(derr);
     }
 
     edge_collapses
+}
+
+fn update_quadrics<const ATTR_COUNT: usize>(
+    collapse_remap: &[u32],
+    vertex_count: usize,
+    vertex_quadrics: &mut [Quadric],
+    attribute_quadrics: &mut [Quadric],
+    attribute_gradients: &mut [[QuadricGrad; ATTR_COUNT]],
+    vertex_positions: &[Vector3],
+    remap: &[u32],
+    vertex_error: &mut f32,
+) {
+    for i in 0..vertex_count {
+        if collapse_remap[i] as usize == i {
+            continue;
+        }
+
+        let i0 = i;
+        let i1 = collapse_remap[i] as usize;
+
+        let r0 = remap[i0] as usize;
+        let r1 = remap[i1] as usize;
+
+        // ensure we only update vertex_quadrics once: primary vertex must be moved if any wedge is moved
+        if i0 == r0 {
+            vertex_quadrics[r1] += vertex_quadrics[r0];
+        }
+
+        if ATTR_COUNT > 0 {
+            attribute_quadrics[i1] += attribute_quadrics[i0];
+
+            let copy = attribute_gradients[i0];
+            add_grads(&mut attribute_gradients[i1], &copy);
+
+            if i0 == r0 {
+                // when attributes are used, distance error needs to be recomputed as collapses don't track it; it is safe to do this after the quadric adjustment
+                let derr = vertex_quadrics[r0].error(&vertex_positions[r1]);
+                *vertex_error = vertex_error.max(derr);
+            }
+        }
+    }
 }
 
 fn remap_index_buffer(indices: &mut [u32], collapse_remap: &[u32]) -> usize {
@@ -2183,12 +2181,9 @@ where
 
         collapse_locked.fill(false);
 
-        let collapses = perform_edge_collapses(
+        let collapses = perform_edge_collapses::<ATTR_COUNT>(
             &mut collapse_remap,
             &mut collapse_locked,
-            &mut vertex_quadrics,
-            &mut attribute_quadrics,
-            &mut attribute_gradients,
             &edge_collapses,
             edge_collapse_count,
             &collapse_order,
@@ -2202,13 +2197,30 @@ where
             triangle_collapse_goal,
             error_limit,
             &mut result_error_max,
-            &mut vertex_error,
         );
 
         // no edges can be collapsed any more due to hitting the error limit or triangle collapse limit
         if collapses == 0 {
             break;
         }
+
+        update_quadrics(
+            &mut collapse_remap,
+            vertex_count,
+            &mut vertex_quadrics,
+            &mut attribute_quadrics,
+            &mut attribute_gradients,
+            &vertex_positions,
+            &remap,
+            &mut vertex_error,
+        );
+
+        // update_quadrics will update vertex error if we use attributes, but if we don't then result_error and vertex_error are equivalent
+        vertex_error = if ATTR_COUNT == 0 {
+            result_error_max
+        } else {
+            vertex_error
+        };
 
         remap_edge_loops(&mut loop_, &collapse_remap);
         remap_edge_loops(&mut loopback, &collapse_remap);
