@@ -1244,6 +1244,7 @@ fn perform_edge_collapses<const ATTR_COUNT: usize>(
     triangle_collapse_goal: usize,
     error_limit: f32,
     result_error: &mut f32,
+    vertex_error: &mut f32,
 ) -> usize {
     let mut edge_collapses = 0;
     let mut triangle_collapses = 0;
@@ -1387,7 +1388,15 @@ fn perform_edge_collapses<const ATTR_COUNT: usize>(
         triangle_collapses += if kind == VertexKind::Border { 1 } else { 2 };
         edge_collapses += 1;
 
+        // when attributes are used, distance error needs to be recomputed as collapses don't track it; it is safe to do this after the quadric adjustment
+        let derr = if ATTR_COUNT == 0 {
+            unsafe { c.u.error }
+        } else {
+            vertex_quadrics[r0].error(&vertex_positions[r1])
+        };
+
         *result_error = result_error.max(unsafe { c.u.error });
+        *vertex_error = vertex_error.max(derr);
     }
 
     edge_collapses
@@ -2124,6 +2133,7 @@ where
 
     let mut result_count = indices.len();
     let mut result_error_max = 0.0;
+    let mut vertex_error = 0.0;
 
     // `target_error` input is linear; we need to adjust it to match `Quadric::error` units
     let error_scale = if options.contains(SimplificationOptions::SimplifyErrorAbsolute) {
@@ -2192,6 +2202,7 @@ where
             triangle_collapse_goal,
             error_limit,
             &mut result_error_max,
+            &mut vertex_error,
         );
 
         // no edges can be collapsed any more due to hitting the error limit or triangle collapse limit
@@ -2209,14 +2220,14 @@ where
 
         if options.contains(SimplificationOptions::SimplifyPrune)
             && result_count > target_index_count
-            && component_nexterror <= result_error_max
+            && component_nexterror <= vertex_error
         {
             result_count = prune_components(
                 &mut result[0..result_count],
                 &components,
                 &component_errors,
                 component_count,
-                result_error_max,
+                vertex_error,
                 &mut component_nexterror,
             );
         }
@@ -2251,6 +2262,7 @@ where
 
         result_count = new_count;
         result_error_max = result_error_max.max(component_maxerror);
+        vertex_error = vertex_error.max(component_maxerror);
     }
 
     // convert resulting indices back into the dense space of the larger mesh
