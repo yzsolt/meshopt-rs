@@ -346,12 +346,7 @@ fn classify_vertices(
 
     for i in 0..vertex_count {
         if remap[i] == i as u32 {
-            if let Some(vertex_lock) = vertex_lock
-                && vertex_lock[sparse_remap.map(|r| r[i] as usize).unwrap_or(i)]
-            {
-                // vertex is explicitly locked
-                result[i] = VertexKind::Locked;
-            } else if wedge[i] == i as u32 {
+            if wedge[i] == i as u32 {
                 // no attribute seam, need to check if it's manifold
                 let openi = openinc[i];
                 let openo = openout[i];
@@ -423,6 +418,25 @@ fn classify_vertices(
             assert!(remap[i] < i as u32);
 
             result[i] = result[remap[i] as usize];
+        }
+    }
+
+    if let Some(vertex_lock) = vertex_lock {
+        // vertex_lock may lock any wedge, not just the primary vertex, so we need to lock the primary vertex and relock any wedges
+        for i in 0..vertex_count {
+            if vertex_lock[if let Some(sparse_remap) = sparse_remap {
+                sparse_remap[i] as usize
+            } else {
+                i
+            }] {
+                result[remap[i] as usize] = VertexKind::Locked;
+            }
+        }
+
+        for i in 0..vertex_count {
+            if result[remap[i] as usize] == VertexKind::Locked {
+                result[i] = VertexKind::Locked;
+            }
         }
     }
 
@@ -3096,6 +3110,151 @@ mod test {
             18
         );
         assert_eq!(&actual[0..expected.len()], expected);
+    }
+
+    #[test]
+    #[cfg(feature = "experimental")]
+    fn test_simplify_lock_flags_seam() {
+        #[rustfmt::skip]
+        let vb = vb_from_slice(&[
+            0.0, 0.0, 0.0,
+            0.0, 1.0, 0.0,
+            0.0, 1.0, 0.0,
+            0.0, 2.0, 0.0,
+            1.0, 0.0, 0.0,
+            1.0, 1.0, 0.0,
+            1.0, 1.0, 0.0,
+            1.0, 2.0, 0.0,
+            2.0, 0.0, 0.0,
+            2.0, 1.0, 0.0,
+            2.0, 1.0, 0.0,
+            2.0, 2.0, 0.0,
+        ]);
+
+        #[rustfmt::skip]
+        let lock0 = [
+            true, false, false, true,
+            false, false, false, false,
+            true, false, false, true,
+        ];
+
+        #[rustfmt::skip]
+        let lock1 = [
+            true, false, false, true,
+            true, false, false, true,
+            true, false, false, true,
+        ];
+
+        #[rustfmt::skip]
+        let lock2 = [
+            true, false, true, true,
+            true, false, true, true,
+            true, false, true, true,
+        ];
+
+        #[rustfmt::skip]
+        let lock3 = [
+            true, true, false, true,
+            true, true, false, true,
+            true, true, false, true,
+        ];
+
+        // 0 1-2 3
+        // 4 5-6 7
+        // 8 9-10 11
+
+        #[rustfmt::skip]
+        let ib = [
+            0, 1, 4,
+            4, 1, 5,
+            4, 5, 8,
+            8, 5, 9,
+            2, 3, 6,
+            6, 3, 7,
+            6, 7, 10,
+            10, 7, 11,
+        ];
+
+        let mut res = vec![0u32; 24];
+
+        // with no locks, we should be able to collapse the entire mesh (vertices 1-2 and 9-10 are locked but others can move towards them)
+        assert_eq!(
+            simplify_with_attributes::<_, 0>(
+                &mut res,
+                &ib,
+                &vb,
+                &[],
+                None,
+                0,
+                1.0,
+                SimplificationOptions::empty(),
+                None
+            ),
+            0
+        );
+
+        // with corners locked, we should get two quads
+        assert_eq!(
+            simplify_with_attributes::<_, 0>(
+                &mut res,
+                &ib,
+                &vb,
+                &[],
+                Some(&lock0),
+                0,
+                1.0,
+                SimplificationOptions::empty(),
+                None
+            ),
+            12
+        );
+
+        // with both sides locked, we can only collapse the seam spine
+        assert_eq!(
+            simplify_with_attributes::<_, 0>(
+                &mut res,
+                &ib,
+                &vb,
+                &[],
+                Some(&lock1),
+                0,
+                1.0,
+                SimplificationOptions::empty(),
+                None
+            ),
+            18
+        );
+
+        // with seam spine locked, we can collapse nothing; note that we intentionally test two different lock configurations
+        // they each lock only one side of the seam spine, which should be equivalent
+        assert_eq!(
+            simplify_with_attributes::<_, 0>(
+                &mut res,
+                &ib,
+                &vb,
+                &[],
+                Some(&lock2),
+                0,
+                1.0,
+                SimplificationOptions::empty(),
+                None
+            ),
+            24
+        );
+        assert_eq!(
+            simplify_with_attributes::<_, 0>(
+                &mut res,
+                &ib,
+                &vb,
+                &[],
+                Some(&lock3),
+                0,
+                1.0,
+                SimplificationOptions::empty(),
+                None
+            ),
+            24
+        );
     }
 
     #[test]
