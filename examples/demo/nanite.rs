@@ -30,6 +30,7 @@ struct Cluster {
 const CLUSTER_SIZE: usize = 128;
 const GROUP_SIZE: usize = 8;
 const USE_LOCKS: bool = true;
+const USE_NORMALS: bool = true;
 
 fn bounds(vertices: &[impl Vertex], indices: &[u32], error: f32) -> LodBounds {
     let bounds = compute_cluster_bounds(indices, vertices);
@@ -80,13 +81,24 @@ fn bounds_merge(clusters: &[Cluster], group: &[i32]) -> LodBounds {
     result
 }
 
-fn bounds_error(bounds: &LodBounds, x: f32, y: f32, z: f32) -> f32 {
-    let dx = bounds.center[0] - x;
-    let dy = bounds.center[1] - y;
-    let dz = bounds.center[2] - z;
+// computes approximate (perspective) projection error of a cluster in screen space (0..1; multiply by screen height to get pixels)
+// camera_proj is projection[1][1], or cot(fovy/2); camera_znear is *positive* near plane distance
+// for DAG cut to be valid, boundsError must be monotonic: it must return a larger error for parent cluster
+// for simplicity, we ignore perspective distortion and use rotationally invariant projection size estimation
+fn bounds_error(
+    bounds: &LodBounds,
+    camera_x: f32,
+    camera_y: f32,
+    camera_z: f32,
+    camera_proj: f32,
+    camera_znear: f32,
+) -> f32 {
+    let dx = bounds.center[0] - camera_x;
+    let dy = bounds.center[1] - camera_y;
+    let dz = bounds.center[2] - camera_z;
     let d = (dx * dx + dy * dy + dz * dz).sqrt() - bounds.radius;
 
-    if d <= 0.0 { f32::MAX } else { bounds.error / d }
+    bounds.error / (if d > camera_znear { d } else { camera_znear }) * (camera_proj * 0.5)
 }
 
 fn clusterize(vertices: &[impl Vertex], indices: &[u32]) -> Vec<Cluster> {
@@ -155,7 +167,7 @@ fn partition(clusters: &[Cluster], pending: &[i32], _remap: &[u32]) -> Vec<Vec<i
     result
 }
 
-fn lock_boundary(locks: &mut [u8], groups: &Vec<Vec<i32>>, clusters: &[Cluster], remap: &[u32]) {
+fn lock_boundary(locks: &mut [bool], groups: &Vec<Vec<i32>>, clusters: &[Cluster], remap: &[u32]) {
     let mut groupmap = vec![-1i32; locks.len()];
 
     for i in 0..groups.len() {
@@ -180,26 +192,40 @@ fn lock_boundary(locks: &mut [u8], groups: &Vec<Vec<i32>>, clusters: &[Cluster],
     for i in 0..locks.len() {
         let r = remap[i];
 
-        locks[i] = (groupmap[r as usize] == -2) as u8;
+        locks[i] = (groupmap[r as usize] == -2) as bool;
     }
 }
 
-fn simplify2(
-    vertices: &[impl Vertex],
+fn simplify2<V>(
+    vertices: &[V],
     indices: &[u32],
-    locks: Option<&[u8]>,
+    locks: Option<&[bool]>,
     target_count: usize,
     error: Option<&mut f32>,
-) -> Vec<u32> {
+) -> Vec<u32>
+where
+    V: Vertex<0> + Vertex<3>,
+{
     if target_count > indices.len() {
         return indices.to_vec();
     }
 
     let mut lod = vec![0u32; indices.len()];
     let options = SimplificationOptions::SimplifySparse | SimplificationOptions::SimplifyErrorAbsolute;
-    let size = if let Some(locks) = locks {
-        let locks = locks.iter().map(|l| *l != 0).collect::<Vec<_>>();
-
+    let normal_weights = [0.5f32, 0.5, 0.5];
+    let size = if USE_NORMALS {
+        simplify_with_attributes::<_, 3>(
+            &mut lod,
+            indices,
+            vertices,
+            &normal_weights,
+            locks,
+            target_count,
+            f32::MAX,
+            options,
+            error,
+        )
+    } else if let Some(locks) = locks {
         simplify_with_attributes(
             &mut lod,
             indices,
@@ -227,7 +253,10 @@ fn simplify2(
     lod
 }
 
-pub fn nanite(vertices: &[impl Vertex], indices: &[u32]) {
+pub fn nanite<V>(vertices: &[V], indices: &[u32])
+where
+    V: Vertex<0> + Vertex<3>,
+{
     // initial clusterization splits the original mesh
     let mut clusters = clusterize(vertices, indices);
     for cluster in &mut clusters {
@@ -239,7 +268,7 @@ pub fn nanite(vertices: &[impl Vertex], indices: &[u32]) {
     let mut pending: Vec<_> = (0..clusters.len() as i32).collect();
 
     let mut depth = 0;
-    let mut locks = vec![0u8; vertices.len()];
+    let mut locks = vec![false; vertices.len()];
 
     // for cluster connectivity, we need a position-only remap that maps vertices with the same position to the same index
     // it's more efficient to build it once; unfortunately, meshopt_generateVertexRemap doesn't support stride so we need to use *Multi version
@@ -382,16 +411,21 @@ pub fn nanite(vertices: &[impl Vertex], indices: &[u32]) {
     let mut maxy: f32 = 0.0;
     let mut maxz: f32 = 0.0;
     for v in vertices {
-        maxx = maxx.max(v.pos()[0] * 2.0);
-        maxy = maxy.max(v.pos()[1] * 2.0);
-        maxz = maxz.max(v.pos()[2] * 2.0);
+        let p = Vertex::<0>::pos(v);
+        maxx = maxx.max(p[0] * 2.0);
+        maxy = maxy.max(p[1] * 2.0);
+        maxz = maxz.max(p[2] * 2.0);
     }
-    let threshold = 3e-3;
+
+    let threshold = 2e-3; // 2 pixels at 1080p
+    let fovy = 60.0f32;
+    let znear = 1e-2;
+    let proj = 1.0 / (fovy * 3.1415926 / 180.0 * 0.5).tan();
 
     let mut cut = Vec::new();
     for c in &clusters {
-        if bounds_error(&c.self_, maxx, maxy, maxz) <= threshold
-            && bounds_error(&c.parent, maxx, maxy, maxz) > threshold
+        if bounds_error(&c.self_, maxx, maxy, maxz, proj, znear) <= threshold
+            && bounds_error(&c.parent, maxx, maxy, maxz, proj, znear) > threshold
         {
             cut.extend_from_slice(&c.indices);
         }
