@@ -75,24 +75,106 @@ fn decode_filter_quat_scalar<'a>(data: impl Iterator<Item = &'a mut [u16; 4]>) {
     }
 }
 
-fn decode_filter_exp_scalar<'a>(data: impl Iterator<Item = &'a mut u32>) {
+fn decode_filter_exp_scalar(data: &mut [u32]) {
     for v in data {
         // decode mantissa and exponent
         let m = (*v << 8) as i32 >> 8;
         let e = *v as i32 >> 24;
 
-        union U {
-            f: f32,
-            ui: u32,
-        }
-
         // optimized version of ldexp(float(m), e)
         let ui = ((e + 127) as u32) << 23;
-        let mut u = U { ui };
-        u.f = unsafe { u.f } * m as f32;
+        let mut f = f32::from_bits(ui);
+        f = f * (m as f32);
 
-        *v = unsafe { u.ui };
+        *v = f.to_bits();
     }
+}
+
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+#[target_feature(enable = "sse2")]
+/// # Safety
+///
+/// Caller must ensure that the target CPU supports SSE2 intrinsics.
+unsafe fn decode_filter_exp_sse(data: &mut [u32]) {
+    use core::arch::x86_64::*;
+    let (chunks, last_chunk) = data.as_chunks_mut::<4>();
+    for chunk in chunks {
+        // SAFETY: caller ensures that the target CPU supports SSE2 intrinsics.
+        unsafe {
+            let v = _mm_loadu_si128(chunk as *mut _ as *mut _);
+
+            // decode exponent into 2^x directly
+            let ef = _mm_srai_epi32(v, 24);
+            let es = _mm_slli_epi32(_mm_add_epi32(ef, _mm_set1_epi32(127)), 23);
+
+            // decode 24-bit mantissa into floating-point value
+            let mf = _mm_srai_epi32(_mm_slli_epi32(v, 8), 8);
+            let m = _mm_cvtepi32_ps(mf);
+
+            let r = _mm_mul_ps(_mm_castsi128_ps(es), m);
+
+            _mm_storeu_ps(chunk as *mut _ as *mut _, r);
+        }
+    }
+    decode_filter_exp_scalar(last_chunk);
+}
+
+#[cfg(target_arch = "aarch64")]
+#[target_feature(enable = "neon")]
+/// # Safety
+///
+/// Caller must ensure that the target CPU supports NEON intrinsics.
+unsafe fn decode_filter_exp_neon(data: &mut [u32]) {
+    use core::arch::aarch64::*;
+    let (chunks, last_chunk) = data.as_chunks_mut::<4>();
+    for chunk in chunks {
+        // SAFETY: caller ensures that the target CPU supports NEON intrinsics.
+        unsafe {
+            let v = vld1q_s32(chunk as *mut _ as *mut _);
+
+            // decode exponent into 2^x directly
+            let ef = vshrq_n_s32(v, 24);
+            let es = vshlq_n_s32(vaddq_s32(ef, vdupq_n_s32(127)), 23);
+
+            // decode 24-bit mantissa into floating-point value
+            let mf = vshrq_n_s32(vshlq_n_s32(v, 8), 8);
+            let m = vcvtq_f32_s32(mf);
+
+            let r = vmulq_f32(vreinterpretq_f32_s32(es), m);
+
+            vst1q_f32(chunk as *mut _ as *mut _, r);
+        }
+    }
+    decode_filter_exp_scalar(last_chunk);
+}
+
+#[cfg(target_arch = "wasm32")]
+#[target_feature(enable = "simd128")]
+/// # Safety
+///
+/// Caller must ensure that the target host supports simd128 intrinsics.
+unsafe fn decode_filter_exp_wasm_simd(data: &mut [u32]) {
+    use core::arch::wasm32::*;
+    let (chunks, last_chunk) = data.as_chunks_mut::<4>();
+    for chunk in chunks {
+        // SAFETY: caller ensures that the target host supports simd128 intrinsics.
+        unsafe {
+            let v = v128_load(chunk as *mut _ as *mut _);
+
+            // decode exponent into 2^x directly
+            let ef = i32x4_shr(v, 24);
+            let es = i32x4_shl(i32x4_add(ef, i32x4_splat(127)), 23);
+
+            // decode 24-bit mantissa into floating-point value
+            let mf = i32x4_shr(i32x4_shl(v, 8), 8);
+            let m = f32x4_convert_i32x4(mf);
+
+            let r = f32x4_mul(es, m);
+
+            v128_store(chunk as *mut _ as *mut _, r);
+        }
+    }
+    decode_filter_exp_scalar(last_chunk);
 }
 
 /// Decodes octahedral encoding of a unit vector with K-bit (K <= 16) signed X/Y as an input; Z must store 1.0.
@@ -117,7 +199,37 @@ pub fn decode_filter_quat<'a>(data: impl Iterator<Item = &'a mut [u16; 4]>) {
 /// Decodes exponential encoding of floating-point data with 8-bit exponent and 24-bit integer mantissa as 2^E*M.
 ///
 /// Each 32-bit component is decoded in isolation.
-pub fn decode_filter_exp<'a>(data: impl Iterator<Item = &'a mut u32>) {
+pub fn decode_filter_exp(data: &mut [u32]) {
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    if is_x86_feature_detected!("sse2") {
+        // SAFETY: we have checked that the target CPU supports SSE2 intrinsics.
+        unsafe { decode_filter_exp_sse(data) };
+    } else {
+        decode_filter_exp_scalar(data);
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    if is_aarch64_feature_detected!("neon") {
+        // SAFETY: we have checked that the target CPU supports NEON intrinsics.
+        unsafe { decode_filter_exp_neon(data) };
+    } else {
+        decode_filter_exp_scalar(data);
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    {
+        #[cfg(target_feature = "simd128")]
+        // SAFETY: we have checked that the target host supports simd128 intrinsics.
+        unsafe {
+            decode_filter_exp_wasm_simd(data)
+        };
+        #[cfg(not(target_feature = "simd128"))]
+        decode_filter_exp_scalar(data);
+    }
+
+    #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
+    #[cfg(not(target_arch = "aarch64"))]
+    #[cfg(not(target_arch = "wasm32"))]
     decode_filter_exp_scalar(data);
 }
 
@@ -401,13 +513,13 @@ mod test {
 
         // Aligned by 4
         let mut full = DATA;
-        decode_filter_exp(full.iter_mut());
+        decode_filter_exp(&mut full);
         assert_eq!(full, EXPECTED);
 
         // Tail processing for unaligned data
         let mut tail = [0; 3];
         tail.copy_from_slice(&DATA[0..3]);
-        decode_filter_exp(tail.iter_mut());
+        decode_filter_exp(&mut tail);
         assert_eq!(tail, &EXPECTED[0..tail.len()]);
     }
 
@@ -531,13 +643,13 @@ mod test {
         assert_eq!(encoded3, EXPECTED3);
 
         let mut decoded1 = encoded1.clone();
-        decode_filter_exp(decoded1.iter_mut().flatten());
+        decode_filter_exp(decoded1.as_flattened_mut());
 
         let mut decoded2 = encoded2.clone();
-        decode_filter_exp(decoded2.iter_mut().flatten());
+        decode_filter_exp(decoded2.as_flattened_mut());
 
         let mut decoded3 = encoded3.clone();
-        decode_filter_exp(decoded3.iter_mut().flatten());
+        decode_filter_exp(decoded3.as_flattened_mut());
 
         for (i, data) in DATA[0].iter().enumerate() {
             assert!((f32::from_bits(decoded1[0][i]) - *data).abs() < 1e-3);
@@ -557,7 +669,7 @@ mod test {
         assert_eq!(encoded, EXPECTED);
 
         let mut decoded = encoded;
-        decode_filter_exp(decoded.iter_mut().flatten());
+        decode_filter_exp(decoded.as_flattened_mut());
 
         assert_eq!(
             decoded.iter().flatten().map(|d| f32::from_bits(*d)).collect::<Vec<_>>(),

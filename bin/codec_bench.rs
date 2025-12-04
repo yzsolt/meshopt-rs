@@ -157,7 +157,7 @@ fn bench_filters(
 
         let t3 = Instant::now();
 
-        decode_filter_exp(d32.iter_mut());
+        decode_filter_exp(&mut d32);
 
         let t4 = Instant::now();
 

@@ -3,6 +3,7 @@ name = "meshopt-rs"
 version = "0.1.2"
 authors = ["yzsolt"]
 edition = "2024"
+rust-version = "1.88"
 license = "MIT"
 description = "Pure Rust implementation of the meshoptimizer library"
 repository = "https://github.com/yzsolt/meshopt-rs"
