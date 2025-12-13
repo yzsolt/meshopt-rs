@@ -970,6 +970,8 @@ fn stripify_mesh(mesh: &Mesh, use_restart: bool, desc: char) {
     strip.resize(size, 0);
     let duration = start.elapsed();
 
+    let restarts = strip.iter().filter(|s| use_restart && **s == restart_index).count();
+
     let mut copy = mesh.clone();
     let size = unstripify(&mut copy.indices, &strip, restart_index);
     copy.indices.resize(size, 0);
@@ -984,13 +986,18 @@ fn stripify_mesh(mesh: &Mesh, use_restart: bool, desc: char) {
     let vcs_intel = analyze_vertex_cache(&copy.indices, mesh.vertices.len(), 128, 0, 0);
 
     println!(
-        "Stripify{}: ACMR {:.6} ATVR {:.6} (NV {:.6} AMD {:.6} Intel {:.6}); {} strip indices ({:.1}%) in {:.2} msec",
+        "Stripify{}: ACMR {:.6} ATVR {:.6} (NV {:.6} AMD {:.6} Intel {:.6}); {:.1} run avg, {} strip indices ({:.1}%) in {:.2} msec",
         desc,
         vcs.acmr,
         vcs.atvr,
         vcs_nv.atvr,
         vcs_amd.atvr,
         vcs_intel.atvr,
+        if use_restart {
+            (strip.len() - restarts) as f64 / (restarts + 1) as f64
+        } else {
+            0.0
+        },
         strip.len(),
         strip.len() as f64 / mesh.indices.len() as f64 * 100.0,
         duration.as_micros() as f64 / 1000.0
