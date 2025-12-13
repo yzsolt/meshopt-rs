@@ -1050,17 +1050,22 @@ fn follow(parents: &mut [u32], mut index: u32) -> u32 {
     index
 }
 
-fn meshlets(mesh: &Mesh, scan: bool) {
+fn meshlets(mesh: &Mesh, scan: bool, uniform: bool) {
+    // NVidia-recommends 64/126; we round 126 down to a multiple of 4
+    // alternatively we also test uniform configuration with 64/64 which is better for AMD
     const MAX_VERTICES: usize = 64;
-    const MAX_TRIANGLES: usize = 124; // NVidia-recommended 126, rounded down to a multiple of 4
-    const CONE_WEIGHT: f32 = 0.5; // note: should be set to 0 unless cone culling is used at runtime!
+
+    let max_triangles = if uniform { 64 } else { 124 };
+
+    // note: should be set to 0 unless cone culling is used at runtime!
+    const CONE_WEIGHT: f32 = 0.5;
 
     // note: input mesh is assumed to be optimized for vertex cache and vertex fetch
     let start = Instant::now();
-    let max_meshlets = build_meshlets_bound(mesh.indices.len(), MAX_VERTICES, MAX_TRIANGLES);
+    let max_meshlets = build_meshlets_bound(mesh.indices.len(), MAX_VERTICES, max_triangles);
     let mut meshlets = vec![Meshlet::default(); max_meshlets];
     let mut meshlet_vertices = vec![0u32; max_meshlets * MAX_VERTICES];
-    let mut meshlet_triangles = vec![0u8; max_meshlets * MAX_TRIANGLES * 3];
+    let mut meshlet_triangles = vec![0u8; max_meshlets * max_triangles * 3];
 
     let size = if scan {
         build_meshlets_scan(
@@ -1070,7 +1075,7 @@ fn meshlets(mesh: &Mesh, scan: bool) {
             &mesh.indices,
             mesh.vertices.len(),
             MAX_VERTICES,
-            MAX_TRIANGLES,
+            max_triangles,
         )
     } else {
         build_meshlets(
@@ -1080,7 +1085,7 @@ fn meshlets(mesh: &Mesh, scan: bool) {
             &mesh.indices,
             &mesh.vertices,
             MAX_VERTICES,
-            MAX_TRIANGLES,
+            max_triangles,
             CONE_WEIGHT,
         )
     };
@@ -1124,7 +1129,11 @@ fn meshlets(mesh: &Mesh, scan: bool) {
     for m in &meshlets {
         vertices += m.vertex_count as usize;
         triangles += m.triangle_count as usize;
-        not_full += ((m.vertex_count as usize) < MAX_VERTICES) as usize;
+        not_full += if uniform {
+            (m.triangle_count as usize) < max_triangles
+        } else {
+            (m.vertex_count as usize) < MAX_VERTICES
+        } as usize;
 
         for j in 0..m.vertex_count {
             if boundary[meshlet_vertices[(m.vertex_offset + j) as usize] as usize] > 1 {
@@ -1161,7 +1170,13 @@ fn meshlets(mesh: &Mesh, scan: bool) {
 
     println!(
         "Meshlets{}: {} meshlets (avg vertices {:.1}, avg triangles {:.1}, avg boundary {:.1}, not full {}, not connected {}) in {:.2} msec",
-        if scan { 'S' } else { ' ' },
+        if scan {
+            'S'
+        } else if uniform {
+            'U'
+        } else {
+            ' '
+        },
         meshlets.len(),
         vertices as f64 / meshlets.len() as f64,
         triangles as f64 / meshlets.len() as f64,
@@ -1174,11 +1189,7 @@ fn meshlets(mesh: &Mesh, scan: bool) {
     let camera = [100.0, 100.0, 100.0];
 
     let mut rejected = 0;
-    let mut rejected_s8 = 0;
-    let mut rejected_alt = 0;
-    let mut rejected_alt_s8 = 0;
     let mut accepted = 0;
-    let mut accepted_s8 = 0;
 
     let mut radii_cones = vec![(0f64, 0f64); meshlets.len()];
 
@@ -1195,22 +1206,6 @@ fn meshlets(mesh: &Mesh, scan: bool) {
 
         // trivial accept: we can't ever backface cull this meshlet
         accepted += (bounds.cone_cutoff >= 1.0) as usize;
-        accepted_s8 += (bounds.cone_cutoff_s8 == 127) as usize;
-
-        // perspective projection: dot(normalize(cone_apex - camera_position), cone_axis) > cone_cutoff
-        let mview = [
-            bounds.cone_apex[0] - camera[0],
-            bounds.cone_apex[1] - camera[1],
-            bounds.cone_apex[2] - camera[2],
-        ];
-        let mviewlength = (mview[0] * mview[0] + mview[1] * mview[1] + mview[2] * mview[2]).sqrt();
-
-        rejected += (mview[0] * bounds.cone_axis[0] + mview[1] * bounds.cone_axis[1] + mview[2] * bounds.cone_axis[2]
-            >= bounds.cone_cutoff * mviewlength) as usize;
-        rejected_s8 += (mview[0] * (bounds.cone_axis_s8[0] as f32 / 127.0)
-            + mview[1] * (bounds.cone_axis_s8[1] as f32 / 127.0)
-            + mview[2] * (bounds.cone_axis_s8[2] as f32 / 127.0)
-            >= (bounds.cone_cutoff_s8 as f32 / 127.0) * mviewlength) as usize;
 
         // alternative formulation for perspective projection that doesn't use apex (and uses cluster bounding sphere instead):
         // dot(normalize(center - camera_position), cone_axis) > cone_cutoff + radius / length(center - camera_position)
@@ -1221,14 +1216,8 @@ fn meshlets(mesh: &Mesh, scan: bool) {
         ];
         let cviewlength = (cview[0] * cview[0] + cview[1] * cview[1] + cview[2] * cview[2]).sqrt();
 
-        rejected_alt +=
-            (cview[0] * bounds.cone_axis[0] + cview[1] * bounds.cone_axis[1] + cview[2] * bounds.cone_axis[2]
-                >= bounds.cone_cutoff * cviewlength + bounds.radius) as usize;
-        rejected_alt_s8 += (cview[0] * (bounds.cone_axis_s8[0] as f32 / 127.0)
-            + cview[1] * (bounds.cone_axis_s8[1] as f32 / 127.0)
-            + cview[2] * (bounds.cone_axis_s8[2] as f32 / 127.0)
-            >= (bounds.cone_cutoff_s8 as f32 / 127.0) * cviewlength + bounds.radius)
-            as usize;
+        rejected += (cview[0] * bounds.cone_axis[0] + cview[1] * bounds.cone_axis[1] + cview[2] * bounds.cone_axis[2]
+            >= bounds.cone_cutoff * cviewlength + bounds.radius) as usize;
     }
     let duration = start.elapsed();
 
@@ -1246,31 +1235,13 @@ fn meshlets(mesh: &Mesh, scan: bool) {
         .sum();
 
     println!(
-        "Bounds   : radius mean {:.6} stddev {:.6}; {:.1}% meshlets are under mean+stddev; cone mean half angle {:.1}",
+        "Bounds   : radius mean {:.6} stddev {:.6}; {:.1}% meshlets under 1σ; cone angle {:.1}°; cone reject {:.1}% trivial accept {:.1}% in {:.2} msec",
         radius_mean,
         radius_stddev,
         meshlets_std as f64 / meshlets.len() as f64 * 100.0,
-        cone_mean
-    );
-
-    println!(
-        "ConeCull : rejected apex {} ({:.1}%) / center {} ({:.1}%), trivially accepted {} ({:.1}%) in {:.2} msec",
-        rejected,
+        cone_mean,
         rejected as f64 / meshlets.len() as f64 * 100.0,
-        rejected_alt,
-        rejected_alt as f64 / meshlets.len() as f64 * 100.0,
-        accepted,
         accepted as f64 / meshlets.len() as f64 * 100.0,
-        duration.as_micros() as f64 / 1000.0,
-    );
-    println!(
-        "ConeCull8: rejected apex {} ({:.1}%) / center {} ({:.1}%), trivially accepted {} ({:.1}%) in {:.2} msec",
-        rejected_s8,
-        rejected_s8 as f64 / meshlets.len() as f64 * 100.0,
-        rejected_alt_s8,
-        rejected_alt_s8 as f64 / meshlets.len() as f64 * 100.0,
-        accepted_s8,
-        accepted_s8 as f64 / meshlets.len() as f64 * 100.0,
         duration.as_micros() as f64 / 1000.0,
     );
 }
@@ -1551,8 +1522,8 @@ fn process(mesh: &Mesh) {
     stripify_mesh(&copy, true, 'R');
     stripify_mesh(&copystrip, true, 'S');
 
-    meshlets(&copy, false);
-    meshlets(&copy, true);
+    meshlets(&copy, false, false);
+    meshlets(&copy, true, false);
 
     shadow(&copy);
     tessellation_adjacency(&copy);
@@ -1590,7 +1561,7 @@ fn process(mesh: &Mesh) {
 }
 
 fn process_dev(#[allow(unused)] mesh: &Mesh) {
-    meshlets(mesh, false);
+    meshlets(mesh, false, true);
 }
 
 fn process_nanite(mesh: &Mesh) {
