@@ -3544,7 +3544,7 @@ mod test {
             2, 1, 3,
         ];
 
-        let mut dest = ib.clone();
+        let mut dest = ib;
 
         assert_eq!(
             simplify(&mut dest, &ib, &vb, 0, 1.0, SimplificationOptions::empty(), None),

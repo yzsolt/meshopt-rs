@@ -306,6 +306,8 @@ pub fn encode_filter_exp<'a, const N: usize>(
 
 #[cfg(test)]
 mod test {
+    use std::f32::consts::FRAC_1_SQRT_2;
+
     use super::*;
 
     #[test]
@@ -416,8 +418,8 @@ mod test {
         const DATA: [[f32; 4]; 4] = [
             [1.0, 0.0, 0.0, 0.0],
             [0.0, -1.0, 0.0, 0.0],
-            [0.7071068, 0.0, 0.707168, 1.0],
-            [-0.7071068, 0.0, -0.707168, 1.0],
+            [FRAC_1_SQRT_2, 0.0, 0.707168, 1.0],
+            [-FRAC_1_SQRT_2, 0.0, -0.707168, 1.0],
         ];
 
         const EXPECTED: [[u8; 4]; 4] = [
@@ -432,7 +434,7 @@ mod test {
 
         assert_eq!(encoded, *EXPECTED.iter().flatten().copied().collect::<Vec<_>>());
 
-        let mut decoded = encoded.clone();
+        let mut decoded = encoded;
         decode_filter_oct_8(decoded.as_chunks_mut::<4>().0.iter_mut());
 
         for (dat, dec) in DATA.iter().flatten().zip(decoded) {
@@ -445,8 +447,8 @@ mod test {
         const DATA: [[f32; 4]; 4] = [
             [1.0, 0.0, 0.0, 0.0],
             [0.0, -1.0, 0.0, 0.0],
-            [0.7071068, 0.0, 0.707168, 1.0],
-            [-0.7071068, 0.0, -0.707168, 1.0],
+            [FRAC_1_SQRT_2, 0.0, 0.707168, 1.0],
+            [-FRAC_1_SQRT_2, 0.0, -0.707168, 1.0],
         ];
 
         const EXPECTED: [[u16; 4]; 4] = [
@@ -461,7 +463,7 @@ mod test {
 
         assert_eq!(encoded, *EXPECTED.iter().flatten().copied().collect::<Vec<_>>());
 
-        let mut decoded = encoded.clone();
+        let mut decoded = encoded;
         decode_filter_oct_16(decoded.as_chunks_mut::<4>().0.iter_mut());
 
         for (dat, dec) in DATA.iter().flatten().zip(decoded) {
@@ -474,8 +476,8 @@ mod test {
         const DATA: [[f32; 4]; 4] = [
             [1.0, 0.0, 0.0, 0.0],
             [0.0, -1.0, 0.0, 0.0],
-            [0.7071068, 0.0, 0.0, 0.707168],
-            [-0.7071068, 0.0, 0.0, -0.707168],
+            [FRAC_1_SQRT_2, 0.0, 0.0, 0.707168],
+            [-FRAC_1_SQRT_2, 0.0, 0.0, -0.707168],
         ];
 
         const EXPECTED: [[u16; 4]; 4] = [
@@ -490,7 +492,7 @@ mod test {
 
         assert_eq!(encoded, *EXPECTED.iter().flatten().copied().collect::<Vec<_>>());
 
-        let mut decoded = encoded.clone();
+        let mut decoded = encoded;
         decode_filter_quat(decoded.as_chunks_mut::<4>().0.iter_mut());
 
         for (dat, dec) in DATA.iter().zip(decoded.as_chunks::<4>().0) {
@@ -530,13 +532,13 @@ mod test {
         encode_filter_exp::<2>(encoded3.iter_mut(), 15, DATA.iter(), EncodeExpMode::SharedComponent);
         assert_eq!(encoded3, EXPECTED3);
 
-        let mut decoded1 = encoded1.clone();
+        let mut decoded1 = encoded1;
         decode_filter_exp(decoded1.iter_mut().flatten());
 
-        let mut decoded2 = encoded2.clone();
+        let mut decoded2 = encoded2;
         decode_filter_exp(decoded2.iter_mut().flatten());
 
-        let mut decoded3 = encoded3.clone();
+        let mut decoded3 = encoded3;
         decode_filter_exp(decoded3.iter_mut().flatten());
 
         for (i, data) in DATA[0].iter().enumerate() {
