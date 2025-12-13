@@ -627,6 +627,7 @@ mod test {
     }
 
     #[test]
+    #[cfg(feature = "experimental")]
     fn test_provoking() {
         // 0 1 2
         // 3 4 5

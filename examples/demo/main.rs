@@ -1,5 +1,6 @@
 #![allow(clippy::identity_op)]
 
+#[cfg(feature = "experimental")]
 mod nanite;
 
 use meshopt_rs::cluster::*;
@@ -24,8 +25,6 @@ use std::fmt::Debug;
 use std::hash::{Hash, Hasher};
 use std::path::Path;
 use std::time::Instant;
-
-use nanite::nanite;
 
 #[derive(Clone, Copy, Default, Debug)]
 #[repr(C)]
@@ -1449,6 +1448,7 @@ fn tessellation_adjacency(mesh: &Mesh) {
     );
 }
 
+#[cfg(feature = "experimental")]
 fn provoking(mesh: &Mesh) {
     let start = Instant::now();
 
@@ -1528,6 +1528,7 @@ fn process(mesh: &Mesh) {
 
     shadow(&copy);
     tessellation_adjacency(&copy);
+    #[cfg(feature = "experimental")]
     provoking(&copy);
 
     encode_index(&copy, ' ');
@@ -1561,12 +1562,13 @@ fn process(mesh: &Mesh) {
     spatial_sort_mesh_triangles(mesh);
 }
 
-fn process_dev(#[allow(unused)] mesh: &Mesh) {
+fn process_dev(mesh: &Mesh) {
     meshlets(mesh, false, true);
 }
 
-fn process_nanite(mesh: &Mesh) {
-    nanite(&mesh.vertices, &mesh.indices);
+fn process_nanite(#[allow(unused)] mesh: &Mesh) {
+    #[cfg(feature = "experimental")]
+    nanite::nanite(&mesh.vertices, &mesh.indices);
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
