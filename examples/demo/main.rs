@@ -19,6 +19,7 @@ use meshopt_rs::vertex::*;
 use meshopt_rs::{INVALID_INDEX, Stream};
 
 use std::env;
+use std::f64::consts::PI;
 use std::fmt::Debug;
 use std::hash::{Hash, Hasher};
 use std::path::Path;
@@ -1202,7 +1203,7 @@ fn meshlets(mesh: &Mesh, scan: bool, uniform: bool) {
         );
 
         *radius = bounds.radius as f64;
-        *cone = 90.0 - bounds.cone_cutoff.acos() as f64 * (180.0 / 3.1415926);
+        *cone = 90.0 - bounds.cone_cutoff.acos() as f64 * (180.0 / PI);
 
         // trivial accept: we can't ever backface cull this meshlet
         accepted += (bounds.cone_cutoff >= 1.0) as usize;

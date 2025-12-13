@@ -4,6 +4,8 @@
 // For reference, see the original Nanite paper:
 // Brian Karis. Nanite: A Deep Dive. 2021
 
+use std::f32::consts::PI;
+
 use meshopt_rs::{
     Stream,
     cluster::{Meshlet, build_meshlets, build_meshlets_bound, compute_cluster_bounds, optimize_meshlet},
@@ -167,7 +169,7 @@ fn partition(clusters: &[Cluster], pending: &[i32], _remap: &[u32]) -> Vec<Vec<i
     result
 }
 
-fn lock_boundary(locks: &mut [bool], groups: &Vec<Vec<i32>>, clusters: &[Cluster], remap: &[u32]) {
+fn lock_boundary(locks: &mut [bool], groups: &[Vec<i32>], clusters: &[Cluster], remap: &[u32]) {
     let mut groupmap = vec![-1i32; locks.len()];
 
     for i in 0..groups.len() {
@@ -231,7 +233,7 @@ where
             indices,
             vertices,
             &[],
-            Some(&locks),
+            Some(locks),
             target_count,
             f32::MAX,
             options,
@@ -273,8 +275,8 @@ where
     // for cluster connectivity, we need a position-only remap that maps vertices with the same position to the same index
     // it's more efficient to build it once; unfortunately, meshopt_generateVertexRemap doesn't support stride so we need to use *Multi version
     let mut remap = vec![0u32; vertices.len()];
-    let position = Stream::from_slice(&vertices);
-    generate_vertex_remap_multi(&mut remap, Some(&indices), &[position]);
+    let position = Stream::from_slice(vertices);
+    generate_vertex_remap_multi(&mut remap, Some(indices), &[position]);
 
     // merge and simplify clusters until we can't merge anymore
     while pending.len() > 1 {
@@ -318,7 +320,7 @@ where
                 merged.extend_from_slice(clusters[groups[i][j] as usize].indices.as_slice());
             }
 
-            let target_size = ((groups[i].len() + 1) / 2) * CLUSTER_SIZE * 3;
+            let target_size = groups[i].len().div_ceil(2);
             let mut error = 0.0;
             let simplified = simplify2(
                 vertices,
@@ -420,7 +422,7 @@ where
     let threshold = 2e-3; // 2 pixels at 1080p
     let fovy = 60.0f32;
     let znear = 1e-2;
-    let proj = 1.0 / (fovy * 3.1415926 / 180.0 * 0.5).tan();
+    let proj = 1.0 / (fovy * PI / 180.0 * 0.5).tan();
 
     let mut cut = Vec::new();
     for c in &clusters {

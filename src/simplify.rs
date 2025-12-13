@@ -1359,6 +1359,7 @@ fn perform_edge_collapses<const ATTR_COUNT: usize>(
     edge_collapses
 }
 
+#[allow(clippy::too_many_arguments)]
 fn update_quadrics<const ATTR_COUNT: usize>(
     collapse_remap: &[u32],
     vertex_count: usize,
@@ -1369,13 +1370,18 @@ fn update_quadrics<const ATTR_COUNT: usize>(
     remap: &[u32],
     vertex_error: &mut f32,
 ) {
-    for i in 0..vertex_count {
-        if collapse_remap[i] as usize == i {
+    for (i, cr) in collapse_remap
+        .iter()
+        .map(|cr| *cr as usize)
+        .enumerate()
+        .take(vertex_count)
+    {
+        if cr == i {
             continue;
         }
 
         let i0 = i;
-        let i1 = collapse_remap[i] as usize;
+        let i1 = cr;
 
         let r0 = remap[i0] as usize;
         let r1 = remap[i1] as usize;
@@ -1458,8 +1464,8 @@ fn follow(parents: &mut [u32], mut index: u32) -> u32 {
 }
 
 fn build_components(components: &mut [u32], vertex_count: usize, indices: &[u32], remap: &[u32]) -> usize {
-    for i in 0..vertex_count {
-        components[i] = i as u32;
+    for (i, c) in components.iter_mut().enumerate().take(vertex_count) {
+        *c = i as u32;
     }
 
     // compute a unique (but not sequential!) index for each component via union-find
@@ -1594,9 +1600,9 @@ fn prune_components(
 
     // update next error with the smallest error of the remaining components for future pruning
     *nexterror = f32::MAX;
-    for i in 0..component_count {
-        if component_errors[i] > error_cutoff {
-            *nexterror = nexterror.min(component_errors[i]);
+    for ce in component_errors.iter().copied().take(component_count) {
+        if ce > error_cutoff {
+            *nexterror = nexterror.min(ce);
         }
     }
 
@@ -2118,7 +2124,7 @@ where
             .iter()
             .take(component_count)
             .copied()
-            .min_by(|a, b| a.partial_cmp(&b).unwrap_or(std::cmp::Ordering::Equal))
+            .min_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
             .unwrap_or(f32::MAX);
     }
 
@@ -2205,7 +2211,7 @@ where
         }
 
         update_quadrics(
-            &mut collapse_remap,
+            &collapse_remap,
             vertex_count,
             &mut vertex_quadrics,
             &mut attribute_quadrics,
@@ -2254,9 +2260,9 @@ where
 
         // track maximum error in eligible components as we are increasing resulting error
         let mut component_maxerror = 0.0;
-        for i in 0..component_count {
-            if component_errors[i] > component_maxerror && component_errors[i] <= component_cutoff {
-                component_maxerror = component_errors[i];
+        for ce in component_errors.iter().copied().take(component_count) {
+            if ce > component_maxerror && ce <= component_cutoff {
+                component_maxerror = ce;
             }
         }
 
