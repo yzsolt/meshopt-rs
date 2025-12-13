@@ -2672,25 +2672,6 @@ mod test {
         }
     }
 
-    #[derive(Default, Clone, Copy)]
-    struct TestVertexWith1Attribute(([f32; 3], f32));
-
-    impl Vertex<1> for TestVertexWith1Attribute {
-        fn pos(&self) -> [f32; 3] {
-            self.0.0
-        }
-
-        fn attrs(&self) -> [f32; 1] {
-            [self.0.1]
-        }
-    }
-
-    impl Vertex for TestVertexWith1Attribute {
-        fn pos(&self) -> [f32; 3] {
-            self.0.0
-        }
-    }
-
     fn vb_from_slice(slice: &[f32]) -> Vec<TestVertex> {
         slice
             .chunks_exact(3)
@@ -2702,11 +2683,35 @@ mod test {
             .collect()
     }
 
-    fn vba_from_slice(slice: &[f32]) -> Vec<TestVertexWith1Attribute> {
-        slice
-            .chunks_exact(4)
-            .map(|v| TestVertexWith1Attribute(([v[0], v[1], v[2]], v[3])))
-            .collect()
+    #[cfg(feature = "experimental")]
+    mod experimental {
+        use super::*;
+
+        #[derive(Default, Clone, Copy)]
+        pub struct TestVertexWith1Attribute(([f32; 3], f32));
+
+        impl Vertex<1> for TestVertexWith1Attribute {
+            fn pos(&self) -> [f32; 3] {
+                self.0.0
+            }
+
+            fn attrs(&self) -> [f32; 1] {
+                [self.0.1]
+            }
+        }
+
+        impl Vertex for TestVertexWith1Attribute {
+            fn pos(&self) -> [f32; 3] {
+                self.0.0
+            }
+        }
+
+        pub fn vba_from_slice(slice: &[f32]) -> Vec<TestVertexWith1Attribute> {
+            slice
+                .chunks_exact(4)
+                .map(|v| TestVertexWith1Attribute(([v[0], v[1], v[2]], v[3])))
+                .collect()
+        }
     }
 
     #[test]
@@ -3290,6 +3295,8 @@ mod test {
     #[test]
     #[cfg(feature = "experimental")]
     fn test_simplify_sparse() {
+        use experimental::*;
+
         #[rustfmt::skip]
         let vb = vba_from_slice(&[
             0.0, 0.0, 100.0, 100.0,
@@ -3424,6 +3431,8 @@ mod test {
     #[test]
     #[cfg(feature = "experimental")]
     fn test_simplify_seam() {
+        use experimental::*;
+
         #[rustfmt::skip]
         let vb = vba_from_slice(&[
             0.0, 0.0, 0.0, 0.0,
@@ -3519,6 +3528,8 @@ mod test {
     #[test]
     #[cfg(feature = "experimental")]
     fn test_simplify_seam_fake() {
+        use experimental::*;
+
         #[rustfmt::skip]
         let vb = vba_from_slice(&[
             0.0, 0.0, 0.0, 0.0,

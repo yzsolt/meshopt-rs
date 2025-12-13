@@ -27,7 +27,7 @@ jobs:
     - name: Check
       run: cargo check ${{ matrix.features }}
     - name: Clippy
-      run: cargo clippy ${{ matrix.features }}
+      run: cargo clippy ${{ matrix.features }} --examples --tests
     - name: Build
       run: cargo build ${{ matrix.features }}
     - name: Test
