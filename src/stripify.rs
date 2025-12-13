@@ -1,10 +1,8 @@
 //! Mesh triangle list ↔ triangle strip conversion
 
-use crate::INVALID_INDEX;
-
-fn find_strip_first(buffer: &[[u32; 3]], valence: &[u32]) -> usize {
+fn find_strip_first(buffer: &[[u32; 3]], valence: &[u8]) -> usize {
     let mut index = 0;
-    let mut iv = INVALID_INDEX;
+    let mut iv = u8::MAX;
 
     for (i, b) in buffer.iter().enumerate() {
         let va = valence[b[0] as usize];
@@ -62,7 +60,8 @@ pub fn stripify(destination: &mut [u32], indices: &[u32], vertex_count: usize, r
     let mut strip_size = 0;
 
     // compute vertex valence; this is used to prioritize starting triangle for strips
-    let mut valence = vec![0; vertex_count];
+    // note: we use 8-bit counters for performance; for outlier vertices the valence is incorrect but that just affects the heuristic
+    let mut valence = vec![0u8; vertex_count];
 
     for index in indices {
         valence[*index as usize] += 1;

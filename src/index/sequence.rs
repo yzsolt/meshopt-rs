@@ -12,6 +12,8 @@ const SEQUENCE_HEADER: u8 = 0xd0;
 ///
 /// Returns encoded data size on success, 0 on error; the only error condition is if buffer doesn't have enough space
 ///
+/// For maximum efficiency the vertex buffer being encoded has to be quantized and optimized for locality of reference (cache/fetch) first.
+///
 /// # Arguments
 ///
 /// * `buffer`: must contain enough space for the encoded index sequence (use [encode_index_sequence_bound] to compute worst case size)

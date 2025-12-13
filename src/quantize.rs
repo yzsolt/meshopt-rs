@@ -110,7 +110,7 @@ mod test {
         assert_eq!(quantize_float(1.2345, 23), 1.2345);
 
         assert_eq!(quantize_float(1.2345, 16), 1.2344971);
-        assert_eq!(quantize_float(1.2345, 8), 1.2343750);
+        assert_eq!(quantize_float(1.2345, 8), 1.234375);
         assert_eq!(quantize_float(1.2345, 4), 1.25);
         assert_eq!(quantize_float(1.2345, 1), 1.0);
 
@@ -119,7 +119,7 @@ mod test {
         assert_eq!(quantize_float(1.0 / 0.0, 0), 1.0 / 0.0);
         assert_eq!(quantize_float(-1.0 / 0.0, 0), -1.0 / 0.0);
 
-        let nanf = quantize_float(0.0 / 0.0, 8);
+        let nanf = quantize_float(f32::NAN, 8);
         assert!(nanf.is_nan());
     }
 
@@ -161,7 +161,7 @@ mod test {
         assert_eq!(quantize_half(-1.0 / 0.0), 0xfc00);
 
         // nan
-        let nanh = quantize_half(0.0 / 0.0);
+        let nanh = quantize_half(f32::NAN);
         assert!(nanh == 0x7e00 || nanh == 0xfe00);
     }
 

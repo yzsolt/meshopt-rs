@@ -38,6 +38,11 @@ pub struct Bounds {
     pub cone_cutoff_s8: i8,
 }
 
+/// Meshlet is a small mesh cluster (subset) that consists of:
+/// - triangles, an 8-bit micro triangle (index) buffer, that for each triangle specifies three local vertices to use;
+/// - vertices, a 32-bit vertex indirection buffer, that for each local vertex specifies which mesh vertex to fetch vertex attributes from.
+///
+/// For efficiency, meshlet triangles and vertices are packed into two large arrays; this structure contains offsets and counts to access the data.
 #[derive(Clone, Default)]
 pub struct Meshlet {
     /* offsets within meshlet_vertices and meshlet_triangles arrays with meshlet data */
@@ -495,6 +500,7 @@ pub fn build_meshlets_bound(index_count: usize, max_vertices: usize, max_triangl
 ///
 /// The resulting data can be used to render meshes using NVidia programmable mesh shading pipeline, or in other cluster-based renderers.
 /// For maximum efficiency the index buffer being converted has to be optimized for vertex cache first.
+/// When targeting mesh shading hardware, for maximum efficiency meshlets should be further optimized using [optimize_meshlet].
 ///
 /// # Arguments
 ///
@@ -561,9 +567,9 @@ fn get_neighbor_triangle(
     used: &[u8],
     meshlet_expected_radius: f32,
     cone_weight: f32,
-) -> (Option<usize>, usize) {
+) -> Option<usize> {
     let mut best_triangle = None;
-    let mut best_extra = 5;
+    let mut best_priority = 5;
     let mut best_score = f32::MAX;
 
     for i in 0..meshlet.vertex_count {
@@ -582,20 +588,29 @@ fn get_neighbor_triangle(
             let b = *b as usize;
             let c = *c as usize;
 
-            let mut extra = [used[a], used[b], used[c]].iter().filter(|v| **v == UNUSED).count();
+            let extra = [used[a], used[b], used[c]].iter().filter(|v| **v == UNUSED).count();
+            assert!(extra <= 2);
 
-            // triangles that don't add new vertices to meshlets are max. priority
-            if extra != 0 {
+            let priority = if extra == 0 {
+                // triangles that don't add new vertices to meshlets are max. priority
+                0
+            } else if live_triangles[a] == 1 || live_triangles[b] == 1 || live_triangles[c] == 1 {
                 // artificially increase the priority of dangling triangles as they're expensive to add to new meshlets
-                if live_triangles[a] == 1 || live_triangles[b] == 1 || live_triangles[c] == 1 {
-                    extra = 0;
-                }
-
-                extra += 1;
-            }
+                1
+            } else if (live_triangles[a] == 2) as usize
+                + (live_triangles[b] == 2) as usize
+                + (live_triangles[c] == 2) as usize
+                >= 2
+            {
+                // if two vertices have live count of 2, removing this triangle will make another triangle dangling which is good for overall flow
+                1 + extra
+            } else {
+                // otherwise adjust priority to be after the above cases, 3 or 4 based on used[] count
+                2 + extra
+            };
 
             // since topology-based priority is always more important than the score, we can skip scoring in some cases
-            if extra > best_extra {
+            if priority > best_priority {
                 continue;
             }
 
@@ -618,21 +633,22 @@ fn get_neighbor_triangle(
 
             // note that topology-based priority is always more important than the score
             // this helps maintain reasonable effectiveness of meshlet data and reduces scoring cost
-            if extra < best_extra || score < best_score {
+            if priority < best_priority || score < best_score {
                 best_triangle = Some(triangle);
-                best_extra = extra;
+                best_priority = priority;
                 best_score = score;
             }
         }
     }
 
-    (best_triangle, best_extra)
+    best_triangle
 }
 
 /// Splits the mesh into a set of meshlets where each meshlet has a micro index buffer indexing into meshlet vertices that refer to the original vertex buffer.
 ///
 /// The resulting data can be used to render meshes using NVidia programmable mesh shading pipeline, or in other cluster-based renderers.
 /// For maximum efficiency the index buffer being converted has to be optimized for vertex cache first.
+/// When targeting mesh shading hardware, for maximum efficiency meshlets should be further optimized using [optimize_meshlet].
 ///
 /// # Arguments
 ///
@@ -701,7 +717,7 @@ where
     loop {
         let meshlet_cone = get_meshlet_cone(&meshlet_cone_acc, meshlet.triangle_count);
 
-        let (mut best_triangle, best_extra) = get_neighbor_triangle(
+        let mut best_triangle = get_neighbor_triangle(
             &meshlet,
             Some(&meshlet_cone),
             meshlet_vertices,
@@ -713,10 +729,19 @@ where
             meshlet_expected_radius,
             cone_weight,
         );
+        let best_extra = if let Some(best_triangle) = best_triangle {
+            indices[best_triangle * 3..best_triangle * 3 + 3]
+                .iter()
+                .map(|i| used[*i as usize])
+                .filter(|u| *u == 0xff)
+                .count() as isize
+        } else {
+            -1
+        };
 
         // if the best triangle doesn't fit into current meshlet, the spatial scoring we've used is not very meaningful, so we re-select using topological scoring
         if best_triangle.is_some()
-            && ((meshlet.vertex_count + best_extra as u32) as usize > max_vertices
+            && ((meshlet.vertex_count as isize + best_extra) as usize > max_vertices
                 || meshlet.triangle_count as usize >= max_triangles)
         {
             best_triangle = get_neighbor_triangle(
@@ -730,8 +755,7 @@ where
                 &used,
                 meshlet_expected_radius,
                 0.0,
-            )
-            .0;
+            );
         }
 
         // when we run out of neighboring triangles we need to switch to spatial search; we currently just pick the closest triangle irrespective of connectivity
@@ -845,7 +869,8 @@ where
 ///
 /// # Arguments
 ///
-/// * `indices`: should be smaller than or equal to 256*3 (the function assumes clusters of limited size)
+/// * `indices`: `indices.len() / 3` must not exceed implementation limits (<= 512)
+/// * `vertices`: should specify all vertices in the entire mesh, not cluster or meshlet
 pub fn compute_cluster_bounds<V>(indices: &[u32], vertices: &[V]) -> Bounds
 where
     V: Vertex,
