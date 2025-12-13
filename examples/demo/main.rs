@@ -1102,13 +1102,28 @@ fn meshlets(mesh: &Mesh, scan: bool) {
 
     let mut vertices = 0;
     let mut triangles = 0;
+    let mut boundaries = 0;
     let mut not_full = 0;
     let mut not_connected = 0;
+
+    let mut boundary = vec![0u32; mesh.vertices.len()];
+
+    for m in &meshlets {
+        for j in 0..m.vertex_count {
+            boundary[meshlet_vertices[(m.vertex_offset + j) as usize] as usize] += 1;
+        }
+    }
 
     for m in &meshlets {
         vertices += m.vertex_count as usize;
         triangles += m.triangle_count as usize;
         not_full += ((m.vertex_count as usize) < MAX_VERTICES) as usize;
+
+        for j in 0..m.vertex_count {
+            if boundary[meshlet_vertices[(m.vertex_offset + j) as usize] as usize] > 1 {
+                boundaries += 1;
+            }
+        }
 
         // union-find vertices to check if the meshlet is connected
         let mut parents = [0u32; MAX_VERTICES];
@@ -1138,11 +1153,12 @@ fn meshlets(mesh: &Mesh, scan: bool) {
     }
 
     println!(
-        "Meshlets{}: {} meshlets (avg vertices {:.1}, avg triangles {:.1}, not full {}, not connected {}) in {:.2} msec",
+        "Meshlets{}: {} meshlets (avg vertices {:.1}, avg triangles {:.1}, avg boundary {:.1}, not full {}, not connected {}) in {:.2} msec",
         if scan { 'S' } else { ' ' },
         meshlets.len(),
         vertices as f64 / meshlets.len() as f64,
         triangles as f64 / meshlets.len() as f64,
+        boundaries as f64 / meshlets.len() as f64,
         not_full,
         not_connected,
         duration.as_micros() as f64 / 1000.0
@@ -1157,10 +1173,10 @@ fn meshlets(mesh: &Mesh, scan: bool) {
     let mut accepted = 0;
     let mut accepted_s8 = 0;
 
-    let mut radii = vec![0f64; meshlets.len()];
+    let mut radii_cones = vec![(0f64, 0f64); meshlets.len()];
 
     let start = Instant::now();
-    for (m, radius) in meshlets.iter().zip(radii.iter_mut()) {
+    for (m, (radius, cone)) in meshlets.iter().zip(radii_cones.iter_mut()) {
         let bounds = compute_meshlet_bounds(
             &meshlet_vertices[m.vertex_offset as usize..],
             &meshlet_triangles[m.triangle_offset as usize..(m.triangle_offset + m.triangle_count * 3) as usize],
@@ -1168,6 +1184,7 @@ fn meshlets(mesh: &Mesh, scan: bool) {
         );
 
         *radius = bounds.radius as f64;
+        *cone = 90.0 - bounds.cone_cutoff.acos() as f64 * (180.0 / 3.1415926);
 
         // trivial accept: we can't ever backface cull this meshlet
         accepted += (bounds.cone_cutoff >= 1.0) as usize;
@@ -1208,17 +1225,25 @@ fn meshlets(mesh: &Mesh, scan: bool) {
     }
     let duration = start.elapsed();
 
-    let radius_mean: f64 = radii.iter().sum::<f64>() / radii.len() as f64;
-    let radius_variance: f64 =
-        radii.iter().map(|r| (r - radius_mean) * (r - radius_mean)).sum::<f64>() / (radii.len() - 1) as f64;
+    let radius_mean: f64 = radii_cones.iter().map(|rc| rc.0).sum::<f64>() / radii_cones.len() as f64;
+    let cone_mean: f64 = radii_cones.iter().map(|rc| rc.1).sum::<f64>() / radii_cones.len() as f64;
+    let radius_variance: f64 = radii_cones
+        .iter()
+        .map(|rc| (rc.0 - radius_mean) * (rc.0 - radius_mean))
+        .sum::<f64>()
+        / (radii_cones.len() - 1) as f64;
     let radius_stddev = radius_variance.sqrt();
-    let meshlets_std: usize = radii.iter().map(|r| (*r < radius_mean + radius_stddev) as usize).sum();
+    let meshlets_std: usize = radii_cones
+        .iter()
+        .map(|rc| (rc.0 < radius_mean + radius_stddev) as usize)
+        .sum();
 
     println!(
-        "BoundDist: mean {:.6} stddev {:.6}; {:.1}% meshlets are under mean+stddev",
+        "Bounds   : radius mean {:.6} stddev {:.6}; {:.1}% meshlets are under mean+stddev; cone mean half angle {:.1}",
         radius_mean,
         radius_stddev,
-        meshlets_std as f64 / meshlets.len() as f64 * 100.0
+        meshlets_std as f64 / meshlets.len() as f64 * 100.0,
+        cone_mean
     );
 
     println!(
@@ -1558,8 +1583,7 @@ fn process(mesh: &Mesh) {
 }
 
 fn process_dev(#[allow(unused)] mesh: &Mesh) {
-    #[cfg(feature = "experimental")]
-    simplify_attr(mesh, 0.1, SimplificationOptions::SimplifyPrune);
+    meshlets(mesh, false);
 }
 
 fn process_nanite(mesh: &Mesh) {
